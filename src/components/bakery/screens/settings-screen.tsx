@@ -30,7 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import {
-  AlertTriangle, DatabaseBackup, DownloadCloud, FileUp, KeyRound, Pencil, Save, UploadCloud, UserPlus,
+  AlertTriangle, DatabaseBackup, DownloadCloud, Eye, EyeOff, FileUp, KeyRound, Pencil, Save, UploadCloud, UserPlus,
 } from 'lucide-react'
 
 type BizForm = { businessName: string; ownerName: string; phone: string; address: string; currencyCode: string; currencySymbol: string }
@@ -111,6 +111,7 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
   const [pwUser, setPwUser] = useState<UserInfo | null>(null)
   const [newPassword, setNewPassword] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
+  const [showPwDialog, setShowPwDialog] = useState(false)
   const [pwBusy, setPwBusy] = useState(false)
   const [pwError, setPwError] = useState('')
 
@@ -231,8 +232,8 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
       setNewUserError('الاسم المعروض مطلوب')
       return
     }
-    if (newUser.password.length < 8) {
-      setNewUserError('كلمة المرور يجب أن تكون 8 أحرف على الأقل')
+    if (newUser.password.length < 4) {
+      setNewUserError('كلمة المرور يجب أن تكون 4 أحرف على الأقل')
       return
     }
     setNewUserBusy(true)
@@ -282,8 +283,8 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
   async function submitPassword() {
     if (!pwUser) return
     setPwError('')
-    if (newPassword.length < 8) {
-      setPwError('كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل')
+    if (newPassword.length < 4) {
+      setPwError('كلمة المرور الجديدة يجب أن تكون 4 أحرف على الأقل')
       return
     }
     const isSelf = pwUser.id === user.id
@@ -602,7 +603,7 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
                                 variant="ghost"
                                 size="sm"
                                 className="h-9"
-                                onClick={() => { setPwUser(u); setNewPassword(''); setCurrentPassword(''); setPwError('') }}
+                                onClick={() => { setPwUser(u); setNewPassword(''); setCurrentPassword(''); setPwError(''); setShowPwDialog(false) }}
                                 aria-label={`تغيير كلمة مرور ${u.username}`}
                               >
                                 <KeyRound className="h-4 w-4" aria-hidden />
@@ -807,7 +808,7 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="nu-password">كلمة المرور * (8 أحرف على الأقل)</Label>
+              <Label htmlFor="nu-password">كلمة المرور * (4 أحرف على الأقل)</Label>
               <Input id="nu-password" type="password" value={newUser.password} onChange={e => setNewUser(f => ({ ...f, password: e.target.value }))} className="h-10" dir="ltr" autoComplete="new-password" />
             </div>
           </div>
@@ -877,12 +878,22 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
             {pwUser?.id === user.id ? (
               <div className="space-y-1.5">
                 <Label htmlFor="pw-current">كلمة المرور الحالية *</Label>
-                <Input id="pw-current" type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} className="h-10" dir="ltr" autoComplete="current-password" />
+                <div className="relative">
+                  <Input id="pw-current" type={showPwDialog ? 'text' : 'password'} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} className="h-10 pe-10" dir="ltr" autoComplete="current-password" />
+                  <button type="button" onClick={() => setShowPwDialog(v => !v)} aria-label={showPwDialog ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'} aria-pressed={showPwDialog} className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
+                    {showPwDialog ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+                  </button>
+                </div>
               </div>
             ) : null}
             <div className="space-y-1.5">
-              <Label htmlFor="pw-new">كلمة المرور الجديدة * (8 أحرف على الأقل)</Label>
-              <Input id="pw-new" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="h-10" dir="ltr" autoComplete="new-password" />
+              <Label htmlFor="pw-new">كلمة المرور الجديدة * (4 أحرف على الأقل)</Label>
+              <div className="relative">
+                <Input id="pw-new" type={showPwDialog ? 'text' : 'password'} value={newPassword} onChange={e => setNewPassword(e.target.value)} className="h-10 pe-10" dir="ltr" autoComplete="new-password" />
+                <button type="button" onClick={() => setShowPwDialog(v => !v)} aria-label={showPwDialog ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'} aria-pressed={showPwDialog} className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
+                  {showPwDialog ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+                </button>
+              </div>
             </div>
           </div>
           {pwError ? (

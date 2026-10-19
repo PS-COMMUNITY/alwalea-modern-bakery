@@ -6,9 +6,9 @@ import type { AuthUser } from '@/lib/bakery/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Lock } from 'lucide-react'
+import { Eye, EyeOff, Lock } from 'lucide-react'
 
-/** شاشة تسجيل الدخول — محلية بالكامل */
+/** شاشة تسجيل الدخول — كلمة مرور واحدة فقط (وضع الحساب الواحد) */
 export function LoginScreen({
   businessName, locked, bootError, onLogin,
 }: {
@@ -17,15 +17,15 @@ export function LoginScreen({
   bootError?: string
   onLogin: (u: AuthUser) => Promise<void>
 }) {
-  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (locked) {
-      setUsername('')
       setPassword('')
+      setShowPw(false)
       setError('')
     }
   }, [locked])
@@ -33,13 +33,14 @@ export function LoginScreen({
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault()
     setError('')
-    if (!username || !password) {
-      setError('أدخل اسم المستخدم وكلمة المرور')
+    if (!password) {
+      setError('أدخل كلمة المرور')
       return
     }
     setBusy(true)
     try {
-      const u = await api.post<AuthUser>('/api/auth/login', { username, password })
+      // الجلسة تُربط تلقائيًا بحساب المالك في الخادم — لا اختيار مستخدم
+      const u = await api.post<AuthUser>('/api/auth/login', { password })
       await onLogin(u)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'فشل تسجيل الدخول')
@@ -57,37 +58,38 @@ export function LoginScreen({
           <p className="mt-1 text-sm text-muted-foreground">
             {locked ? (
               <span className="inline-flex items-center gap-1.5 font-semibold text-copper-700">
-                <Lock className="h-4 w-4" aria-hidden /> تم قفل الجلسة بسبب الخمول — أدخل بياناتك للمتابعة
+                <Lock className="h-4 w-4" aria-hidden /> تم قفل الجلسة بسبب الخمول — أدخل كلمة المرور للمتابعة
               </span>
             ) : (
-              'تسجيل الدخول إلى النظام'
+              'أدخل كلمة المرور للدخول إلى النظام'
             )}
           </p>
         </div>
 
         <form onSubmit={submit} className="space-y-4 rounded-2xl border bg-card p-6 shadow-sm">
           <div className="space-y-2">
-            <Label htmlFor="username">اسم المستخدم</Label>
-            <Input
-              id="username"
-              dir="ltr"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              autoComplete="username"
-              autoFocus
-              maxLength={60}
-            />
-          </div>
-          <div className="space-y-2">
             <Label htmlFor="password">كلمة المرور</Label>
-            <Input
-              id="password"
-              type="password"
-              dir="ltr"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              autoComplete="current-password"
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPw ? 'text' : 'password'}
+                dir="ltr"
+                className="pe-11"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="current-password"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw(v => !v)}
+                aria-label={showPw ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                aria-pressed={showPw}
+                className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                {showPw ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+              </button>
+            </div>
           </div>
 
           {bootError ? (

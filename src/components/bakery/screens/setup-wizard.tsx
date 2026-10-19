@@ -9,7 +9,10 @@ import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 
-const STEPS = ['بيانات النشاط', 'العملة والمنطقة', 'حساب المالك']
+const STEPS = ['بيانات النشاط', 'العملة والمنطقة', 'كلمة المرور']
+
+/** كلمة المرور الأولية الافتراضية — تُخزَّن مُلبَّدة فورًا ويمكن تغييرها من الإعدادات لاحقًا */
+const DEFAULT_INITIAL_PASSWORD = '1234'
 
 /** معالج التهيئة لأول تشغيل — يعمل مرة واحدة فقط */
 export function SetupWizard({ onDone }: { onDone: () => Promise<void> }) {
@@ -23,9 +26,8 @@ export function SetupWizard({ onDone }: { onDone: () => Promise<void> }) {
   const [address, setAddress] = useState('')
   const [currencyCode, setCurrencyCode] = useState('ILS')
   const [currencySymbol, setCurrencySymbol] = useState('₪')
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
+  const [password, setPassword] = useState(DEFAULT_INITIAL_PASSWORD)
+  const [confirmPassword, setConfirmPassword] = useState(DEFAULT_INITIAL_PASSWORD)
 
   const next = () => {
     setError('')
@@ -38,12 +40,8 @@ export function SetupWizard({ onDone }: { onDone: () => Promise<void> }) {
 
   const submit = async () => {
     setError('')
-    if (!/^[a-zA-Z0-9_.-]{3,60}$/.test(username)) {
-      setError('اسم المستخدم: حروف إنجليزية وأرقام، 3 أحرف على الأقل')
-      return
-    }
-    if (password.length < 8) {
-      setError('كلمة المرور: 8 أحرف على الأقل')
+    if (password.length < 4) {
+      setError('كلمة المرور: 4 أحرف/أرقام على الأقل')
       return
     }
     if (password !== confirmPassword) {
@@ -52,7 +50,8 @@ export function SetupWizard({ onDone }: { onDone: () => Promise<void> }) {
     }
     setBusy(true)
     try {
-      await api.post('/api/setup', { businessName, ownerName, phone, address, currencyCode, currencySymbol, username, password })
+      // وضع الحساب الواحد: اسم المستخدم owner يُنشأ تلقائيًا في الخادم
+      await api.post('/api/setup', { businessName, ownerName, phone, address, currencyCode, currencySymbol, password })
       await onDone()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'فشل إكمال التهيئة')
@@ -142,14 +141,13 @@ export function SetupWizard({ onDone }: { onDone: () => Promise<void> }) {
 
           {step === 2 && (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="un">اسم مستخدم المالك *</Label>
-                <Input id="un" dir="ltr" value={username} onChange={e => setUsername(e.target.value)} placeholder="owner" autoComplete="username" />
+              <div className="rounded-lg bg-cream-200 p-3 text-sm text-cocoa-700">
+                سيُنشأ حساب المالك تلقائيًا (وضع الحساب الواحد) — الدخول لاحقًا بكلمة المرور فقط.
               </div>
               <div className="space-y-2">
                 <Label htmlFor="pw">كلمة المرور *</Label>
                 <Input id="pw" type="password" dir="ltr" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
-                <p className="text-xs text-muted-foreground">8 أحرف على الأقل — تُخزَّن مُلبَّدة بخوارزمية scrypt ولا يمكن استرجاعها.</p>
+                <p className="text-xs text-muted-foreground">4 أحرف/أرقام على الأقل (الافتراضية 1234) — تُخزَّن مُلبَّدة بخوارزمية scrypt ولا يمكن استرجاعها، ويمكن تغييرها لاحقًا من الإعدادات.</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="pw2">تأكيد كلمة المرور *</Label>

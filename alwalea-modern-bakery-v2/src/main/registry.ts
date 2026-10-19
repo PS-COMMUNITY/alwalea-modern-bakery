@@ -49,10 +49,10 @@ function requirePerm(ctx: SvcCtx, perm: Perm): void {
 
 // ---------- عام ----------
 publicRoute('status.get', (ctx) => {
-  const setupCompleted = (ctx.db.get<{ v: string }>("SELECT value FROM settings WHERE key = 'setup_completed'")?.v ?? '0') === '1'
+  const setupCompleted = (ctx.db.get<{ v: string }>("SELECT value AS v FROM settings WHERE key = 'setup_completed'")?.v ?? '0') === '1'
   return {
     setupCompleted,
-    businessName: setupCompleted ? (ctx.db.get<{ v: string }>("SELECT value FROM settings WHERE key = 'business_name'")?.v ?? null) : null,
+    businessName: setupCompleted ? (ctx.db.get<{ v: string }>("SELECT value AS v FROM settings WHERE key = 'business_name'")?.v ?? null) : null,
     version: '1.0.0',
     schemaVersion: 1
   }

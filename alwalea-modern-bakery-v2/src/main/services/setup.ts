@@ -12,9 +12,10 @@ export function runSetup(ctx: SvcCtx, payload: Record<string, unknown>): { done:
 
   const business = reqStr(payload.businessName, 'اسم النشاط', 120)
   const ownerName = reqStr(payload.ownerName, 'اسم المالك', 120)
-  const username = reqStr(payload.username, 'اسم المستخدم', 60).toLowerCase()
+  // وضع الحساب الواحد: اسم المستخدم يُنشأ تلقائيًا إذا لم يُرسل
+  const username = (typeof payload.username === 'string' && payload.username.trim() ? payload.username.trim() : 'owner').toLowerCase()
   const password = reqStr(payload.password, 'كلمة المرور', 200)
-  if (password.length < 6) throw new ApiError('كلمة المرور يجب ألا تقل عن 6 أحرف')
+  if (password.length < 4) throw new ApiError('كلمة المرور يجب ألا تقل عن 4 أحرف')
 
   if (db.get('SELECT id FROM users WHERE username = ?', [username])) {
     throw new ApiError('اسم المستخدم مستخدم مسبقًا', 409)

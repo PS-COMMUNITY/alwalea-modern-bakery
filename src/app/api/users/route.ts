@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     if (!username || !/^[a-zA-Z0-9_.-]{3,60}$/.test(username)) return fail(400, 'اسم المستخدم مطلوب (حروف إنجليزية وأرقام، 3 أحرف على الأقل)')
     if (!displayName) return fail(400, 'الاسم المعروض مطلوب')
     if (!role || !ROLES.includes(role as never)) return fail(400, 'الدور غير صالح')
-    if (password.length < 8) return fail(400, 'كلمة المرور يجب أن تكون 8 أحرف على الأقل')
+    if (password.length < 4) return fail(400, 'كلمة المرور يجب ألا تقل عن 4 أحرف/أرقام')
     const dup = await db.user.findUnique({ where: { username } })
     if (dup) return fail(409, 'اسم المستخدم موجود مسبقًا')
 

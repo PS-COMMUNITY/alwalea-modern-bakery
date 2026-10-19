@@ -1,0 +1,920 @@
+     1→'use client'
+     2→
+     3→// =============================================================
+     4→// الإعدادات — النشاط، البيع والفاتورة، المستخدمون، النسخ الاحتياطي، حول النظام
+     5→// =============================================================
+     6→
+     7→import { useCallback, useEffect, useRef, useState } from 'react'
+     8→import { api, ApiError } from '@/lib/bakery/client'
+     9→import type { Settings, StatusInfo, UserInfo } from '@/lib/bakery/types'
+    10→import { ROLE_LABELS } from '@/lib/bakery/types'
+    11→import type { Role } from '@/lib/bakery/permissions'
+    12→import { ROLES } from '@/lib/bakery/permissions'
+    13→import { useSession } from '@/components/bakery/shell'
+    14→import {
+    15→  dateTime, EmptyState, ErrorBanner, LoadingRows, PageHeader, TableShell,
+    16→} from '@/components/bakery/kit'
+    17→import { Button } from '@/components/ui/button'
+    18→import { Input } from '@/components/ui/input'
+    19→import { Label } from '@/components/ui/label'
+    20→import { Badge } from '@/components/ui/badge'
+    21→import { Checkbox } from '@/components/ui/checkbox'
+    22→import { Switch } from '@/components/ui/switch'
+    23→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    24→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+    25→import {
+    26→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+    27→  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    28→} from '@/components/ui/alert-dialog'
+    29→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    30→import { useToast } from '@/hooks/use-toast'
+    31→import { cn } from '@/lib/utils'
+    32→import {
+    33→  AlertTriangle, DatabaseBackup, DownloadCloud, FileUp, KeyRound, Pencil, Save, UploadCloud, UserPlus,
+    34→} from 'lucide-react'
+    35→
+    36→type BizForm = { businessName: string; ownerName: string; phone: string; address: string; currencyCode: string; currencySymbol: string }
+    37→
+    38→type SellForm = {
+    39→  taxEnabled: boolean
+    40→  taxRatePct: string
+    41→  negativeStockAllowed: boolean
+    42→  requireCustomerForCredit: boolean
+    43→  receiptWidth: string
+    44→  idleLockMinutes: string
+    45→}
+    46→
+    47→type NewUserForm = { username: string; displayName: string; role: string; password: string }
+    48→type EditUserForm = { displayName: string; role: string; active: boolean }
+    49→
+    50→type PreviewResponse = {
+    51→  exportedAt: string | null
+    52→  schemaVersion: string
+    53→  tables: { table: string; rows: number }[]
+    54→  totalRows: number
+    55→  warnings: string[]
+    56→  message: string
+    57→}
+    58→
+    59→type RestoreResponse = { restored: Record<string, number>; sessionNote: string; message: string }
+    60→
+    61→function sellFormFromSettings(s: Settings): SellForm {
+    62→  return {
+    63→    taxEnabled: s.taxEnabled,
+    64→    taxRatePct: (s.taxRateBp / 100).toString(),
+    65→    negativeStockAllowed: s.negativeStockAllowed,
+    66→    requireCustomerForCredit: s.requireCustomerForCredit,
+    67→    receiptWidth: String(s.receiptWidth),
+    68→    idleLockMinutes: String(s.idleLockMinutes),
+    69→  }
+    70→}
+    71→
+    72→export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () => Promise<void> }) {
+    73→  const { settings, can, user } = useSession()
+    74→  const { toast } = useToast()
+    75→  const canSettings = can('settings.manage')
+    76→  const canUsers = can('users.manage')
+    77→  const canBackup = can('backup.manage')
+    78→  const isOwner = user.role === 'OWNER'
+    79→
+    80→  // ===== النشاط =====
+    81→  const [biz, setBiz] = useState<BizForm>({
+    82→    businessName: settings.businessName,
+    83→    ownerName: settings.ownerName ?? '',
+    84→    phone: settings.phone ?? '',
+    85→    address: settings.address ?? '',
+    86→    currencyCode: settings.currencyCode,
+    87→    currencySymbol: settings.currencySymbol,
+    88→  })
+    89→  const [bizBusy, setBizBusy] = useState(false)
+    90→  const [bizError, setBizError] = useState('')
+    91→
+    92→  // ===== البيع والفاتورة =====
+    93→  const [sell, setSell] = useState<SellForm>(sellFormFromSettings(settings))
+    94→  const [sellBusy, setSellBusy] = useState(false)
+    95→  const [sellError, setSellError] = useState('')
+    96→
+    97→  // ===== المستخدمون =====
+    98→  const [users, setUsers] = useState<UserInfo[] | null>(null)
+    99→  const [usersLoading, setUsersLoading] = useState(true)
+   100→  const [usersError, setUsersError] = useState('')
+   101→
+   102→  const [newUserOpen, setNewUserOpen] = useState(false)
+   103→  const [newUser, setNewUser] = useState<NewUserForm>({ username: '', displayName: '', role: 'CASHIER', password: '' })
+   104→  const [newUserBusy, setNewUserBusy] = useState(false)
+   105→  const [newUserError, setNewUserError] = useState('')
+   106→
+   107→  const [editUser, setEditUser] = useState<UserInfo | null>(null)
+   108→  const [editForm, setEditForm] = useState<EditUserForm>({ displayName: '', role: 'CASHIER', active: true })
+   109→  const [editBusy, setEditBusy] = useState(false)
+   110→
+   111→  const [pwUser, setPwUser] = useState<UserInfo | null>(null)
+   112→  const [newPassword, setNewPassword] = useState('')
+   113→  const [currentPassword, setCurrentPassword] = useState('')
+   114→  const [pwBusy, setPwBusy] = useState(false)
+   115→  const [pwError, setPwError] = useState('')
+   116→
+   117→  // ===== النسخ الاحتياطي =====
+   118→  const [fileData, setFileData] = useState<string | null>(null)
+   119→  const [fileName, setFileName] = useState('')
+   120→  const [preview, setPreview] = useState<PreviewResponse | null>(null)
+   121→  const [confirmUnderstood, setConfirmUnderstood] = useState(false)
+   122→  const [backupBusy, setBackupBusy] = useState(false)
+   123→  const [backupError, setBackupError] = useState('')
+   124→  const [demoOpen, setDemoOpen] = useState(false)
+   125→  const [demoBusy, setDemoBusy] = useState(false)
+   126→  const fileInputRef = useRef<HTMLInputElement>(null)
+   127→
+   128→  // ===== حول النظام =====
+   129→  const [status, setStatus] = useState<StatusInfo | null>(null)
+   130→
+   131→  const loadUsers = useCallback(async () => {
+   132→    if (!canUsers) {
+   133→      setUsersLoading(false)
+   134→      return
+   135→    }
+   136→    setUsersLoading(true)
+   137→    setUsersError('')
+   138→    try {
+   139→      const res = await api.get<UserInfo[]>('/api/users')
+   140→      setUsers(res)
+   141→    } catch (e) {
+   142→      setUsersError(e instanceof ApiError ? e.message : 'تعذر تحميل المستخدمين')
+   143→      setUsers(null)
+   144→    } finally {
+   145→      setUsersLoading(false)
+   146→    }
+   147→  }, [canUsers])
+   148→
+   149→  useEffect(() => {
+   150→    void loadUsers()
+   151→  }, [loadUsers])
+   152→
+   153→  useEffect(() => {
+   154→    void (async () => {
+   155→      try {
+   156→        setStatus(await api.get<StatusInfo>('/api/status'))
+   157→      } catch {
+   158→        // اختياري للعرض
+   159→      }
+   160→    })()
+   161→  }, [])
+   162→
+   163→  // ===== حفظ النشاط =====
+   164→  async function saveBiz() {
+   165→    setBizError('')
+   166→    const businessName = biz.businessName.trim()
+   167→    if (!businessName) {
+   168→      setBizError('اسم النشاط مطلوب')
+   169→      return
+   170→    }
+   171→    setBizBusy(true)
+   172→    try {
+   173→      await api.put('/api/settings', {
+   174→        businessName,
+   175→        ownerName: biz.ownerName.trim() || null,
+   176→        phone: biz.phone.trim() || null,
+   177→        address: biz.address.trim() || null,
+   178→        currencyCode: biz.currencyCode.trim() || undefined,
+   179→        currencySymbol: biz.currencySymbol.trim() || undefined,
+   180→      })
+   181→      toast({ title: 'تم حفظ بيانات النشاط', description: 'حُدث اسم الترويسة والعملة في كل الشاشات.' })
+   182→      if (onSettingsChanged) await onSettingsChanged()
+   183→    } catch (e) {
+   184→      setBizError(e instanceof ApiError ? e.message : 'تعذر حفظ الإعدادات')
+   185→    } finally {
+   186→      setBizBusy(false)
+   187→    }
+   188→  }
+   189→
+   190→  // ===== حفظ البيع =====
+   191→  async function saveSell() {
+   192→    setSellError('')
+   193→    const pct = parseFloat(sell.taxRatePct)
+   194→    if (!isFinite(pct) || pct < 0 || pct > 100) {
+   195→      setSellError('نسبة الضريبة يجب أن تكون بين 0 و 100')
+   196→      return
+   197→    }
+   198→    const idle = parseInt(sell.idleLockMinutes, 10)
+   199→    if (!Number.isInteger(idle) || idle < 1 || idle > 240) {
+   200→      setSellError('قفل الخمول يجب أن يكون بين 1 و 240 دقيقة')
+   201→      return
+   202→    }
+   203→    setSellBusy(true)
+   204→    try {
+   205→      await api.put('/api/settings', {
+   206→        taxEnabled: sell.taxEnabled,
+   207→        taxRateBp: Math.round(pct * 100),
+   208→        negativeStockAllowed: sell.negativeStockAllowed,
+   209→        requireCustomerForCredit: sell.requireCustomerForCredit,
+   210→        receiptWidth: parseInt(sell.receiptWidth, 10) === 58 ? 58 : 80,
+   211→        idleLockMinutes: idle,
+   212→      })
+   213→      toast({ title: 'تم حفظ إعدادات البيع' })
+   214→      if (onSettingsChanged) await onSettingsChanged()
+   215→    } catch (e) {
+   216→      setSellError(e instanceof ApiError ? e.message : 'تعذر حفظ الإعدادات')
+   217→    } finally {
+   218→      setSellBusy(false)
+   219→    }
+   220→  }
+   221→
+   222→  // ===== مستخدم جديد =====
+   223→  async function submitNewUser() {
+   224→    setNewUserError('')
+   225→    const username = newUser.username.trim()
+   226→    if (!/^[a-zA-Z0-9_.-]{3,60}$/.test(username)) {
+   227→      setNewUserError('اسم المستخدم: حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل')
+   228→      return
+   229→    }
+   230→    if (!newUser.displayName.trim()) {
+   231→      setNewUserError('الاسم المعروض مطلوب')
+   232→      return
+   233→    }
+   234→    if (newUser.password.length < 8) {
+   235→      setNewUserError('كلمة المرور يجب أن تكون 8 أحرف على الأقل')
+   236→      return
+   237→    }
+   238→    setNewUserBusy(true)
+   239→    try {
+   240→      await api.post('/api/users', {
+   241→        username,
+   242→        displayName: newUser.displayName.trim(),
+   243→        role: newUser.role,
+   244→        password: newUser.password,
+   245→      })
+   246→      toast({ title: `أُنشئ المستخدم «${username}»`, description: `الدور: ${ROLE_LABELS[newUser.role as Role] ?? newUser.role}` })
+   247→      setNewUserOpen(false)
+   248→      setNewUser({ username: '', displayName: '', role: 'CASHIER', password: '' })
+   249→      void loadUsers()
+   250→    } catch (e) {
+   251→      setNewUserError(e instanceof ApiError ? e.message : 'تعذر إنشاء المستخدم')
+   252→    } finally {
+   253→      setNewUserBusy(false)
+   254→    }
+   255→  }
+   256→
+   257→  // ===== تعديل مستخدم =====
+   258→  async function submitEditUser() {
+   259→    if (!editUser) return
+   260→    setEditBusy(true)
+   261→    try {
+   262→      await api.put(`/api/users/${editUser.id}`, {
+   263→        displayName: editForm.displayName.trim() || undefined,
+   264→        role: editForm.role,
+   265→        active: editForm.active,
+   266→      })
+   267→      toast({ title: 'تم حفظ بيانات المستخدم' })
+   268→      setEditUser(null)
+   269→      void loadUsers()
+   270→    } catch (e) {
+   271→      toast({
+   272→        title: 'تعذر حفظ المستخدم',
+   273→        description: e instanceof ApiError ? e.message : 'خطأ غير متوقع',
+   274→        variant: 'destructive',
+   275→      })
+   276→    } finally {
+   277→      setEditBusy(false)
+   278→    }
+   279→  }
+   280→
+   281→  // ===== تغيير كلمة مرور =====
+   282→  async function submitPassword() {
+   283→    if (!pwUser) return
+   284→    setPwError('')
+   285→    if (newPassword.length < 8) {
+   286→      setPwError('كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل')
+   287→      return
+   288→    }
+   289→    const isSelf = pwUser.id === user.id
+   290→    if (isSelf && !currentPassword) {
+   291→      setPwError('أدخل كلمة مرورك الحالية للتأكيد')
+   292→      return
+   293→    }
+   294→    setPwBusy(true)
+   295→    try {
+   296→      await api.put(`/api/users/${pwUser.id}/password`, {
+   297→        newPassword,
+   298→        ...(isSelf ? { currentPassword } : {}),
+   299→      })
+   300→      toast({ title: 'تم تغيير كلمة المرور', description: 'أُنهيت جلسات هذا المستخدم — سيلزم تسجيل دخول من جديد.' })
+   301→      setPwUser(null)
+   302→      setNewPassword('')
+   303→      setCurrentPassword('')
+   304→    } catch (e) {
+   305→      setPwError(e instanceof ApiError ? e.message : 'تعذر تغيير كلمة المرور')
+   306→    } finally {
+   307→      setPwBusy(false)
+   308→    }
+   309→  }
+   310→
+   311→  // ===== النسخ الاحتياطي =====
+   312→  async function downloadBackup() {
+   313→    setBackupBusy(true)
+   314→    try {
+   315→      await api.download('/api/backup/export', 'bakery-backup.json')
+   316→      toast({ title: 'بدأ تنزيل النسخة الاحتياطية', description: 'ملف JSON كامل قابل للنقل والاستعادة.' })
+   317→    } catch (e) {
+   318→      toast({
+   319→        title: 'تعذر تنزيل النسخة',
+   320→        description: e instanceof ApiError ? e.message : 'خطأ غير متوقع',
+   321→        variant: 'destructive',
+   322→      })
+   323→    } finally {
+   324→      setBackupBusy(false)
+   325→    }
+   326→  }
+   327→
+   328→  function onPickFile(file: File | null | undefined) {
+   329→    setPreview(null)
+   330→    setConfirmUnderstood(false)
+   331→    setBackupError('')
+   332→    setFileData(null)
+   333→    setFileName('')
+   334→    if (!file) return
+   335→    setFileName(file.name)
+   336→    const reader = new FileReader()
+   337→    reader.onload = () => {
+   338→      if (typeof reader.result === 'string') setFileData(reader.result)
+   339→    }
+   340→    reader.onerror = () => {
+   341→      setBackupError('تعذر قراءة الملف')
+   342→    }
+   343→    reader.readAsText(file)
+   344→  }
+   345→
+   346→  async function runPreview() {
+   347→    setBackupError('')
+   348→    if (!fileData) {
+   349→      setBackupError('اختر ملف النسخة الاحتياطية أولًا')
+   350→      return
+   351→    }
+   352→    setBackupBusy(true)
+   353→    try {
+   354→      const res = await api.post<PreviewResponse>('/api/backup/preview', { data: fileData })
+   355→      setPreview(res)
+   356→      setConfirmUnderstood(false)
+   357→    } catch (e) {
+   358→      setPreview(null)
+   359→      setBackupError(e instanceof ApiError ? e.message : 'تعذر فحص الملف')
+   360→    } finally {
+   361→      setBackupBusy(false)
+   362→    }
+   363→  }
+   364→
+   365→  async function runRestore() {
+   366→    if (!fileData || !preview) return
+   367→    setBackupBusy(true)
+   368→    try {
+   369→      const res = await api.post<RestoreResponse>('/api/backup/restore', { data: fileData, confirm: true })
+   370→      toast({ title: 'تمت الاستعادة بنجاح', description: res.sessionNote })
+   371→      setPreview(null)
+   372→      setFileData(null)
+   373→      setFileName('')
+   374→      setConfirmUnderstood(false)
+   375→      if (fileInputRef.current) fileInputRef.current.value = ''
+   376→      if (onSettingsChanged) await onSettingsChanged()
+   377→      void loadUsers()
+   378→    } catch (e) {
+   379→      setBackupError(e instanceof ApiError ? e.message : 'تعذر تنفيذ الاستعادة')
+   380→    } finally {
+   381→      setBackupBusy(false)
+   382→    }
+   383→  }
+   384→
+   385→  async function loadDemo() {
+   386→    setDemoBusy(true)
+   387→    try {
+   388→      await api.post('/api/backup/demo')
+   389→      toast({ title: 'حُملت البيانات التجريبية', description: 'بيانات اصطناعية موسومة بـ«تجريبي» — يمكنك تجربة النظام عليها.' })
+   390→      setDemoOpen(false)
+   391→      if (onSettingsChanged) await onSettingsChanged()
+   392→      void loadUsers()
+   393→    } catch (e) {
+   394→      setDemoOpen(false)
+   395→      toast({
+   396→        title: 'تعذر تحميل البيانات التجريبية',
+   397→        description: e instanceof ApiError ? e.message : 'خطأ غير متوقع',
+   398→        variant: 'destructive',
+   399→      })
+   400→    } finally {
+   401→      setDemoBusy(false)
+   402→    }
+   403→  }
+   404→
+   405→  return (
+   406→    <div>
+   407→      <PageHeader title="الإعدادات" subtitle="إعدادات النشاط والبيع والمستخدمين والنسخ الاحتياطي — كل تعديل موثق في سجل التدقيق" />
+   408→
+   409→      <Tabs defaultValue="business">
+   410→        <TabsList className="mb-4 h-11 flex-wrap h-auto">
+   411→          <TabsTrigger value="business" className="px-4">النشاط</TabsTrigger>
+   412→          <TabsTrigger value="selling" className="px-4">البيع والفاتورة</TabsTrigger>
+   413→          {canUsers ? <TabsTrigger value="users" className="px-4">المستخدمون</TabsTrigger> : null}
+   414→          {canBackup ? <TabsTrigger value="backup" className="px-4">النسخ الاحتياطي</TabsTrigger> : null}
+   415→          <TabsTrigger value="about" className="px-4">حول النظام</TabsTrigger>
+   416→        </TabsList>
+   417→
+   418→        {/* ==================== النشاط ==================== */}
+   419→        <TabsContent value="business">
+   420→          {!canSettings ? (
+   421→            <EmptyState title="لا صلاحية" hint="إعدادات النشاط متاحة للمالك والمدير (settings.manage)." />
+   422→          ) : (
+   423→            <div className="max-w-2xl space-y-4 rounded-xl border bg-card p-4 md:p-6">
+   424→              <div className="grid gap-3 sm:grid-cols-2">
+   425→                <div className="space-y-1.5 sm:col-span-2">
+   426→                  <Label htmlFor="st-name">اسم النشاط *</Label>
+   427→                  <Input id="st-name" value={biz.businessName} onChange={e => setBiz(f => ({ ...f, businessName: e.target.value }))} className="h-10" autoComplete="off" />
+   428→                  <p className="text-xs text-muted-foreground">يظهر في الترويسة والفواتير والتقارير فورًا بعد الحفظ.</p>
+   429→                </div>
+   430→                <div className="space-y-1.5">
+   431→                  <Label htmlFor="st-owner">اسم صاحب العمل</Label>
+   432→                  <Input id="st-owner" value={biz.ownerName} onChange={e => setBiz(f => ({ ...f, ownerName: e.target.value }))} className="h-10" autoComplete="off" />
+   433→                </div>
+   434→                <div className="space-y-1.5">
+   435→                  <Label htmlFor="st-phone">الهاتف</Label>
+   436→                  <Input id="st-phone" value={biz.phone} onChange={e => setBiz(f => ({ ...f, phone: e.target.value }))} className="h-10" dir="ltr" autoComplete="off" />
+   437→                </div>
+   438→                <div className="space-y-1.5 sm:col-span-2">
+   439→                  <Label htmlFor="st-address">العنوان</Label>
+   440→                  <Input id="st-address" value={biz.address} onChange={e => setBiz(f => ({ ...f, address: e.target.value }))} className="h-10" autoComplete="off" />
+   441→                </div>
+   442→                <div className="space-y-1.5">
+   443→                  <Label htmlFor="st-curr-code">رمز العملة (ISO)</Label>
+   444→                  <Input id="st-curr-code" value={biz.currencyCode} onChange={e => setBiz(f => ({ ...f, currencyCode: e.target.value }))} className="h-10" dir="ltr" autoComplete="off" placeholder="ILS" />
+   445→                </div>
+   446→                <div className="space-y-1.5">
+   447→                  <Label htmlFor="st-curr-symbol">رمز العملة المعروض</Label>
+   448→                  <Input id="st-curr-symbol" value={biz.currencySymbol} onChange={e => setBiz(f => ({ ...f, currencySymbol: e.target.value }))} className="h-10" autoComplete="off" placeholder="₪" />
+   449→                </div>
+   450→              </div>
+   451→              {bizError ? (
+   452→                <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-sm font-semibold text-destructive" role="alert">{bizError}</p>
+   453→              ) : null}
+   454→              <div className="flex justify-end">
+   455→                <Button type="button" className="h-10" onClick={() => void saveBiz()} disabled={bizBusy || !biz.businessName.trim()}>
+   456→                  <Save className="h-4 w-4" aria-hidden />
+   457→                  {bizBusy ? 'جارٍ الحفظ…' : 'حفظ بيانات النشاط'}
+   458→                </Button>
+   459→              </div>
+   460→            </div>
+   461→          )}
+   462→        </TabsContent>
+   463→
+   464→        {/* ==================== البيع والفاتورة ==================== */}
+   465→        <TabsContent value="selling">
+   466→          {!canSettings ? (
+   467→            <EmptyState title="لا صلاحية" hint="إعدادات البيع متاحة للمالك والمدير (settings.manage)." />
+   468→          ) : (
+   469→            <div className="max-w-2xl space-y-4 rounded-xl border bg-card p-4 md:p-6">
+   470→              {/* تحذير الضريبة */}
+   471→              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm" role="alert">
+   472→                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+   473→                <p className="font-semibold text-destructive">
+   474→                  لا تفعل الضريبة إلا بعد التأكد من التزاماتك — تأكيد صاحب العمل مطلوب.
+   475→                </p>
+   476→              </div>
+   477→
+   478→              <div className="grid gap-3 sm:grid-cols-2">
+   479→                <div className="flex items-center justify-between rounded-lg border p-3 sm:col-span-2">
+   480→                  <div>
+   481→                    <Label htmlFor="st-tax">تفعيل الضريبة على الفواتير</Label>
+   482→                    <p className="text-xs text-muted-foreground">عند التفعيل تُحسب على كل فاتورة بالصيغة: (المجموع − الخصم) × النسبة.</p>
+   483→                  </div>
+   484→                  <Switch id="st-tax" checked={sell.taxEnabled} onCheckedChange={v => setSell(f => ({ ...f, taxEnabled: v }))} />
+   485→                </div>
+   486→                <div className="space-y-1.5">
+   487→                  <Label htmlFor="st-tax-rate">نسبة الضريبة (%)</Label>
+   488→                  <Input
+   489→                    id="st-tax-rate"
+   490→                    inputMode="decimal"
+   491→                    value={sell.taxRatePct}
+   492→                    onChange={e => setSell(f => ({ ...f, taxRatePct: e.target.value }))}
+   493→                    disabled={!sell.taxEnabled}
+   494→                    className="h-10 tabular-nums"
+   495→                    autoComplete="off"
+   496→                  />
+   497→                  <p className="text-xs text-muted-foreground">تُخزن بنقاط أساس: {Math.round((parseFloat(sell.taxRatePct) || 0) * 100)} bp</p>
+   498→                </div>
+   499→                <div className="flex items-center justify-between rounded-lg border p-3">
+   500→                  <div>
+   501→                    <Label htmlFor="st-negstock">السماح بمخزون سالب</Label>
+   502→                    <p className="text-xs text-muted-foreground">البيع فوق الرصيد المتاح مع وسم الحركة.</p>
+   503→                  </div>
+   504→                  <Switch id="st-negstock" checked={sell.negativeStockAllowed} onCheckedChange={v => setSell(f => ({ ...f, negativeStockAllowed: v }))} />
+   505→                </div>
+   506→                <div className="flex items-center justify-between rounded-lg border p-3">
+   507→                  <div>
+   508→                    <Label htmlFor="st-reqcust">اشتراط عميل للبيع الآجل</Label>
+   509→                    <p className="text-xs text-muted-foreground">يمنع ترحيل فاتورة آجلة بدون اختيار عميل.</p>
+   510→                  </div>
+   511→                  <Switch id="st-reqcust" checked={sell.requireCustomerForCredit} onCheckedChange={v => setSell(f => ({ ...f, requireCustomerForCredit: v }))} />
+   512→                </div>
+   513→                <div className="space-y-1.5">
+   514→                  <Label>عرض الإيصال الحراري</Label>
+   515→                  <Select value={sell.receiptWidth} onValueChange={v => setSell(f => ({ ...f, receiptWidth: v }))}>
+   516→                    <SelectTrigger className="h-10 w-full" aria-label="عرض الإيصال"><SelectValue /></SelectTrigger>
+   517→                    <SelectContent>
+   518→                      <SelectItem value="58">58 مم (محفظة)</SelectItem>
+   519→                      <SelectItem value="80">80 مم (عريض)</SelectItem>
+   520→                    </SelectContent>
+   521→                  </Select>
+   522→                </div>
+   523→                <div className="space-y-1.5">
+   524→                  <Label htmlFor="st-idle">قفل الخمول (دقيقة — 1 إلى 240)</Label>
+   525→                  <Input id="st-idle" inputMode="numeric" value={sell.idleLockMinutes} onChange={e => setSell(f => ({ ...f, idleLockMinutes: e.target.value }))} className="h-10 tabular-nums" autoComplete="off" />
+   526→                </div>
+   527→              </div>
+   528→
+   529→              {sellError ? (
+   530→                <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-sm font-semibold text-destructive" role="alert">{sellError}</p>
+   531→              ) : null}
+   532→
+   533→              <div className="flex justify-end">
+   534→                <Button type="button" className="h-10" onClick={() => void saveSell()} disabled={sellBusy}>
+   535→                  <Save className="h-4 w-4" aria-hidden />
+   536→                  {sellBusy ? 'جارٍ الحفظ…' : 'حفظ إعدادات البيع'}
+   537→                </Button>
+   538→              </div>
+   539→            </div>
+   540→          )}
+   541→        </TabsContent>
+   542→
+   543→        {/* ==================== المستخدمون ==================== */}
+   544→        {canUsers ? (
+   545→          <TabsContent value="users">
+   546→            <div className="mb-4 flex justify-end">
+   547→              <Button type="button" className="h-10" onClick={() => { setNewUser({ username: '', displayName: '', role: 'CASHIER', password: '' }); setNewUserError(''); setNewUserOpen(true) }}>
+   548→                <UserPlus className="h-4 w-4" aria-hidden />
+   549→                مستخدم جديد
+   550→              </Button>
+   551→            </div>
+   552→
+   553→            {usersError ? <ErrorBanner message={usersError} onRetry={loadUsers} /> : null}
+   554→
+   555→            {usersLoading ? (
+   556→              <LoadingRows rows={4} />
+   557→            ) : users && users.length === 0 ? (
+   558→              <EmptyState title="لا مستخدمين" hint="أنشئ مستخدمي الكاشير والمخزون والإنتاج بمصفوفة صلاحيات جاهزة." />
+   559→            ) : users ? (
+   560→              <TableShell>
+   561→                <table className="w-full text-sm">
+   562→                  <thead className="sticky top-0 z-10 bg-cream-200">
+   563→                    <tr>
+   564→                      <th className="p-3 text-start font-semibold">اسم المستخدم</th>
+   565→                      <th className="p-3 text-start font-semibold">الاسم المعروض</th>
+   566→                      <th className="p-3 text-start font-semibold">الدور</th>
+   567→                      <th className="p-3 text-start font-semibold">آخر دخول</th>
+   568→                      <th className="p-3 text-start font-semibold">الحالة</th>
+   569→                      <th className="p-3 text-start font-semibold">إجراءات</th>
+   570→                    </tr>
+   571→                  </thead>
+   572→                  <tbody>
+   573→                    {users.map(u => (
+   574→                      <tr key={u.id} className={cn('border-t transition-colors hover:bg-cream-100', !u.active && 'opacity-60')}>
+   575→                        <td className="p-3 font-mono text-xs" dir="ltr">{u.username}</td>
+   576→                        <td className="p-3 font-semibold">{u.displayName}{u.id === user.id ? <Badge variant="secondary" className="ms-2">أنت</Badge> : null}</td>
+   577→                        <td className="p-3"><Badge variant="outline">{ROLE_LABELS[u.role] ?? u.role}</Badge></td>
+   578→                        <td className="p-3 text-muted-foreground">{u.lastLoginAt ? dateTime(u.lastLoginAt) : '—'}</td>
+   579→                        <td className="p-3">
+   580→                          {u.active ? (
+   581→                            <Badge className="bg-ok-600 text-white gap-1"><span aria-hidden>✓</span> مفعّل</Badge>
+   582→                          ) : (
+   583→                            <Badge variant="outline" className="gap-1"><span aria-hidden>⏸</span> معطّل</Badge>
+   584→                          )}
+   585→                        </td>
+   586→                        <td className="p-3">
+   587→                          <div className="flex gap-1.5">
+   588→                            <Button
+   589→                              type="button"
+   590→                              variant="outline"
+   591→                              size="sm"
+   592→                              className="h-9"
+   593→                              onClick={() => { setEditUser(u); setEditForm({ displayName: u.displayName, role: u.role, active: u.active }) }}
+   594→                              aria-label={`تعديل ${u.username}`}
+   595→                            >
+   596→                              <Pencil className="h-4 w-4" aria-hidden />
+   597→                              تعديل
+   598→                            </Button>
+   599→                            {isOwner || u.id === user.id ? (
+   600→                              <Button
+   601→                                type="button"
+   602→                                variant="ghost"
+   603→                                size="sm"
+   604→                                className="h-9"
+   605→                                onClick={() => { setPwUser(u); setNewPassword(''); setCurrentPassword(''); setPwError('') }}
+   606→                                aria-label={`تغيير كلمة مرور ${u.username}`}
+   607→                              >
+   608→                                <KeyRound className="h-4 w-4" aria-hidden />
+   609→                                كلمة المرور
+   610→                              </Button>
+   611→                            ) : null}
+   612→                          </div>
+   613→                        </td>
+   614→                      </tr>
+   615→                    ))}
+   616→                  </tbody>
+   617→                </table>
+   618→              </TableShell>
+   619→            ) : null}
+   620→          </TabsContent>
+   621→        ) : null}
+   622→
+   623→        {/* ==================== النسخ الاحتياطي ==================== */}
+   624→        {canBackup ? (
+   625→          <TabsContent value="backup">
+   626→            <div className="grid gap-4 lg:grid-cols-2">
+   627→              {/* تنزيل */}
+   628→              <section className="rounded-xl border bg-card p-4 md:p-6" aria-label="تنزيل نسخة احتياطية">
+   629→                <h2 className="flex items-center gap-2 text-lg font-bold">
+   630→                  <DownloadCloud className="h-5 w-5 text-copper-600" aria-hidden />
+   631→                  تنزيل نسخة احتياطية
+   632→                </h2>
+   633→                <p className="mt-1 text-sm text-muted-foreground">
+   634→                  ملف JSON كامل بكل الجداول وإصدار المخطط — احفظه في مكان آمن خارج الجهاز.
+   635→                </p>
+   636→                <Button type="button" className="mt-4 h-10" onClick={() => void downloadBackup()} disabled={backupBusy}>
+   637→                  <DatabaseBackup className="h-4 w-4" aria-hidden />
+   638→                  {backupBusy ? 'جارٍ التنزيل…' : 'تنزيل نسخة احتياطية'}
+   639→                </Button>
+   640→              </section>
+   641→
+   642→              {/* بيانات تجريبية */}
+   643→              <section className="rounded-xl border bg-card p-4 md:p-6" aria-label="بيانات تجريبية">
+   644→                <h2 className="flex items-center gap-2 text-lg font-bold">
+   645→                  <FileUp className="h-5 w-5 text-copper-600" aria-hidden />
+   646→                  بيانات تجريبية
+   647→                </h2>
+   648→                <p className="mt-1 text-sm text-muted-foreground">
+   649→                  بيانات اصطناعية موسومة بـ«تجريبي» لتجربة النظام — تعمل فقط على قاعدة فارغة بلا عمليات فعلية.
+   650→                </p>
+   651→                <Button type="button" variant="outline" className="mt-4 h-10" onClick={() => setDemoOpen(true)} disabled={demoBusy}>
+   652→                  {demoBusy ? 'جارٍ التحميل…' : 'تحميل بيانات تجريبية'}
+   653→                </Button>
+   654→              </section>
+   655→
+   656→              {/* استعادة */}
+   657→              <section className="rounded-xl border bg-card p-4 md:p-6 lg:col-span-2" aria-label="استعادة من ملف">
+   658→                <h2 className="flex items-center gap-2 text-lg font-bold">
+   659→                  <UploadCloud className="h-5 w-5 text-copper-600" aria-hidden />
+   660→                  استعادة من ملف
+   661→                </h2>
+   662→                <p className="mt-1 text-sm text-muted-foreground">
+   663→                  الاستعادة تستبدل كل البيانات الحالية بالكامل — تأكد من وجود نسخة حديثة أولًا.
+   664→                </p>
+   665→
+   666→                <div className="mt-4 flex flex-wrap items-center gap-3">
+   667→                  <Input
+   668→                    ref={fileInputRef}
+   669→                    type="file"
+   670→                    accept=".json,application/json"
+   671→                    onChange={e => onPickFile(e.target.files?.[0])}
+   672→                    className="h-10 max-w-sm"
+   673→                    aria-label="ملف النسخة الاحتياطية"
+   674→                  />
+   675→                  {fileName ? <span className="text-sm text-muted-foreground">الملف: {fileName}</span> : null}
+   676→                  <Button type="button" variant="outline" className="h-10" onClick={() => void runPreview()} disabled={!fileData || backupBusy}>
+   677→                    {backupBusy ? 'جارٍ الفحص…' : 'فحص ومعاينة'}
+   678→                  </Button>
+   679→                </div>
+   680→
+   681→                {backupError ? (
+   682→                  <p className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-sm font-semibold text-destructive" role="alert">{backupError}</p>
+   683→                ) : null}
+   684→
+   685→                {preview ? (
+   686→                  <div className="mt-4 space-y-3">
+   687→                    <div className="rounded-lg border bg-cream-100/60 p-3 text-sm">
+   688→                      <b>معاينة الملف:</b> إصدار المخطط {preview.schemaVersion}
+   689→                      {preview.exportedAt ? <> — صُدّر {dateTime(preview.exportedAt)}</> : null}
+   690→                      {' '}— الإجمالي {preview.totalRows} سجلًا.
+   691→                    </div>
+   692→
+   693→                    <div className="overflow-hidden rounded-xl border">
+   694→                      <div className="nice-scroll max-h-48 overflow-y-auto">
+   695→                        <table className="w-full text-sm">
+   696→                          <thead className="sticky top-0 bg-cream-200">
+   697→                            <tr>
+   698→                              <th className="p-2.5 text-start font-semibold">الجدول</th>
+   699→                              <th className="p-2.5 text-start font-semibold">عدد السجلات</th>
+   700→                            </tr>
+   701→                          </thead>
+   702→                          <tbody>
+   703→                            {preview.tables.map(t => (
+   704→                              <tr key={t.table} className={cn('border-t', t.rows === 0 && 'opacity-60')}>
+   705→                                <td className="p-2.5 font-mono text-xs" dir="ltr">{t.table}</td>
+   706→                                <td className="p-2.5 tabular-nums">{t.rows}</td>
+   707→                              </tr>
+   708→                            ))}
+   709→                          </tbody>
+   710→                        </table>
+   711→                      </div>
+   712→                    </div>
+   713→
+   714→                    {preview.warnings.length > 0 ? (
+   715→                      <div className="rounded-lg border border-copper-500/50 bg-copper-100/40 p-3 text-sm" role="alert">
+   716→                        <b className="flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" aria-hidden />تحذيرات:</b>
+   717→                        <ul className="mt-1 list-inside list-disc space-y-0.5">
+   718→                          {preview.warnings.map((w, i) => <li key={i}>{w}</li>)}
+   719→                        </ul>
+   720→                      </div>
+   721→                    ) : null}
+   722→
+   723→                    <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm font-semibold text-destructive">
+   724→                      ⚠ {preview.message}
+   725→                    </p>
+   726→
+   727→                    <div className="flex items-center gap-2">
+   728→                      <Checkbox
+   729→                        id="restore-confirm"
+   730→                        checked={confirmUnderstood}
+   731→                        onCheckedChange={v => setConfirmUnderstood(v === true)}
+   732→                      />
+   733→                      <Label htmlFor="restore-confirm" className="cursor-pointer text-sm font-semibold">
+   734→                        أفهم أن الاستعادة ستحل محل كل البيانات الحالية
+   735→                      </Label>
+   736→                    </div>
+   737→
+   738→                    <div className="flex justify-end">
+   739→                      <Button
+   740→                        type="button"
+   741→                        variant="destructive"
+   742→                        className="h-10"
+   743→                        onClick={() => void runRestore()}
+   744→                        disabled={!confirmUnderstood || backupBusy}
+   745→                      >
+   746→                        {backupBusy ? 'جارٍ الاستعادة…' : 'استعادة الآن'}
+   747→                      </Button>
+   748→                    </div>
+   749→                  </div>
+   750→                ) : null}
+   751→              </section>
+   752→            </div>
+   753→          </TabsContent>
+   754→        ) : null}
+   755→
+   756→        {/* ==================== حول النظام ==================== */}
+   757→        <TabsContent value="about">
+   758→          <div className="max-w-2xl space-y-4">
+   759→            <div className="rounded-xl border bg-card p-4 md:p-6">
+   760→              <div className="flex items-center gap-3">
+   761→                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cocoa-900 text-xl font-black text-copper-400" aria-hidden>و</span>
+   762→                <div>
+   763→                  <h2 className="text-lg font-bold">نظام إدارة {settings.businessName}</h2>
+   764→                  <p className="text-sm text-muted-foreground">الإصدار 1.0.0 {status ? `— إصدار المخطط ${status.schemaVersion}` : ''}</p>
+   765→                </div>
+   766→              </div>
+   767→              <ul className="mt-4 space-y-2 text-sm leading-relaxed text-muted-foreground">
+   768→                <li>• البيانات محلية SQLite على هذا الجهاز — النظام يعمل دون إنترنت.</li>
+   769→                <li>• النسخ الاحتياطية ملفات JSON قابلة للنقل بين الأجهزة ويمكن استعادتها في أي وقت.</li>
+   770→                <li>• كلمات المرور مُلبَّدة بـ scrypt مع Salt مستقل لكل مستخدم — لا تُخزن نصًا أبدًا.</li>
+   771→                <li>• تنبيه أمان: قاعدة البيانات المحلية ليست حماية ضد من يملك الجهاز — احمِ الجهاز نفسه واحفظ النسخ الاحتياطية في مكان آمن.</li>
+   772→                <li>• الأموال تُخزن بالأغورة (أعداد صحيحة) والكميات بالألفية — بلا أخذ عائم في الحسابات المالية.</li>
+   773→                <li>• سجل التدقيق يوثق كل عملية حساسة للقراءة فقط — لا تعديل ولا حذف من أي واجهة.</li>
+   774→              </ul>
+   775→            </div>
+   776→          </div>
+   777→        </TabsContent>
+   778→      </Tabs>
+   779→
+   780→      {/* ===== مستخدم جديد ===== */}
+   781→      <Dialog open={newUserOpen} onOpenChange={setNewUserOpen}>
+   782→        <DialogContent className="max-w-md">
+   783→          <DialogHeader>
+   784→            <DialogTitle>مستخدم جديد</DialogTitle>
+   785→            <DialogDescription>
+   786→              الدور يحدد صلاحيات المستخدم تلقائيًا (المالك يملك الكل، والكاشير يقتصر على البيع والتحصيل).
+   787→            </DialogDescription>
+   788→          </DialogHeader>
+   789→          <div className="space-y-3">
+   790→            <div className="space-y-1.5">
+   791→              <Label htmlFor="nu-username">اسم المستخدم * (إنجليزي/أرقام)</Label>
+   792→              <Input id="nu-username" value={newUser.username} onChange={e => setNewUser(f => ({ ...f, username: e.target.value }))} className="h-10" dir="ltr" autoComplete="off" />
+   793→            </div>
+   794→            <div className="space-y-1.5">
+   795→              <Label htmlFor="nu-display">الاسم المعروض *</Label>
+   796→              <Input id="nu-display" value={newUser.displayName} onChange={e => setNewUser(f => ({ ...f, displayName: e.target.value }))} className="h-10" autoComplete="off" />
+   797→            </div>
+   798→            <div className="space-y-1.5">
+   799→              <Label>الدور *</Label>
+   800→              <Select value={newUser.role} onValueChange={v => setNewUser(f => ({ ...f, role: v }))}>
+   801→                <SelectTrigger className="h-10 w-full" aria-label="دور المستخدم"><SelectValue /></SelectTrigger>
+   802→                <SelectContent>
+   803→                  {ROLES.map(r => (
+   804→                    <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>
+   805→                  ))}
+   806→                </SelectContent>
+   807→              </Select>
+   808→            </div>
+   809→            <div className="space-y-1.5">
+   810→              <Label htmlFor="nu-password">كلمة المرور * (8 أحرف على الأقل)</Label>
+   811→              <Input id="nu-password" type="password" value={newUser.password} onChange={e => setNewUser(f => ({ ...f, password: e.target.value }))} className="h-10" dir="ltr" autoComplete="new-password" />
+   812→            </div>
+   813→          </div>
+   814→          {newUserError ? (
+   815→            <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-sm font-semibold text-destructive" role="alert">{newUserError}</p>
+   816→          ) : null}
+   817→          <DialogFooter className="gap-2">
+   818→            <Button type="button" variant="outline" className="h-10" onClick={() => setNewUserOpen(false)} disabled={newUserBusy}>إلغاء</Button>
+   819→            <Button type="button" className="h-10" onClick={() => void submitNewUser()} disabled={newUserBusy}>
+   820→              {newUserBusy ? 'جارٍ الإنشاء…' : 'إنشاء المستخدم'}
+   821→            </Button>
+   822→          </DialogFooter>
+   823→        </DialogContent>
+   824→      </Dialog>
+   825→
+   826→      {/* ===== تعديل مستخدم ===== */}
+   827→      <Dialog open={!!editUser} onOpenChange={v => { if (!v) setEditUser(null) }}>
+   828→        <DialogContent className="max-w-sm">
+   829→          <DialogHeader>
+   830→            <DialogTitle>تعديل المستخدم {editUser?.username}</DialogTitle>
+   831→            <DialogDescription>
+   832→              حمايات مدمجة: لا يمكن تعطيل حسابك أو إزالة دور المالك من آخر مالك نشط.
+   833→            </DialogDescription>
+   834→          </DialogHeader>
+   835→          <div className="space-y-3">
+   836→            <div className="space-y-1.5">
+   837→              <Label htmlFor="eu-display">الاسم المعروض</Label>
+   838→              <Input id="eu-display" value={editForm.displayName} onChange={e => setEditForm(f => ({ ...f, displayName: e.target.value }))} className="h-10" autoComplete="off" />
+   839→            </div>
+   840→            <div className="space-y-1.5">
+   841→              <Label>الدور</Label>
+   842→              <Select value={editForm.role} onValueChange={v => setEditForm(f => ({ ...f, role: v }))}>
+   843→                <SelectTrigger className="h-10 w-full" aria-label="دور المستخدم"><SelectValue /></SelectTrigger>
+   844→                <SelectContent>
+   845→                  {ROLES.map(r => (
+   846→                    <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>
+   847→                  ))}
+   848→                </SelectContent>
+   849→              </Select>
+   850→            </div>
+   851→            <div className="flex items-center gap-2">
+   852→              <Switch id="eu-active" checked={editForm.active} onCheckedChange={v => setEditForm(f => ({ ...f, active: v }))} />
+   853→              <Label htmlFor="eu-active">مفعّل (التعطيل يُنهي جلساته فورًا)</Label>
+   854→            </div>
+   855→          </div>
+   856→          <DialogFooter className="gap-2">
+   857→            <Button type="button" variant="outline" className="h-10" onClick={() => setEditUser(null)} disabled={editBusy}>إلغاء</Button>
+   858→            <Button type="button" className="h-10" onClick={() => void submitEditUser()} disabled={editBusy}>
+   859→              {editBusy ? 'جارٍ الحفظ…' : 'حفظ'}
+   860→            </Button>
+   861→          </DialogFooter>
+   862→        </DialogContent>
+   863→      </Dialog>
+   864→
+   865→      {/* ===== تغيير كلمة المرور ===== */}
+   866→      <Dialog open={!!pwUser} onOpenChange={v => { if (!v) setPwUser(null) }}>
+   867→        <DialogContent className="max-w-sm">
+   868→          <DialogHeader>
+   869→            <DialogTitle>تغيير كلمة مرور {pwUser?.displayName}</DialogTitle>
+   870→            <DialogDescription>
+   871→              {pwUser?.id === user.id
+   872→                ? 'أنت تغير كلمة مرورك — أدخل الحالية للتأكيد.'
+   873→                : 'المالك يغير كلمة مرور أي مستخدم دون الحاجة للحالية.'}
+   874→            </DialogDescription>
+   875→          </DialogHeader>
+   876→          <div className="space-y-3">
+   877→            {pwUser?.id === user.id ? (
+   878→              <div className="space-y-1.5">
+   879→                <Label htmlFor="pw-current">كلمة المرور الحالية *</Label>
+   880→                <Input id="pw-current" type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} className="h-10" dir="ltr" autoComplete="current-password" />
+   881→              </div>
+   882→            ) : null}
+   883→            <div className="space-y-1.5">
+   884→              <Label htmlFor="pw-new">كلمة المرور الجديدة * (8 أحرف على الأقل)</Label>
+   885→              <Input id="pw-new" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="h-10" dir="ltr" autoComplete="new-password" />
+   886→            </div>
+   887→          </div>
+   888→          {pwError ? (
+   889→            <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-sm font-semibold text-destructive" role="alert">{pwError}</p>
+   890→          ) : null}
+   891→          <DialogFooter className="gap-2">
+   892→            <Button type="button" variant="outline" className="h-10" onClick={() => setPwUser(null)} disabled={pwBusy}>إلغاء</Button>
+   893→            <Button type="button" className="h-10" onClick={() => void submitPassword()} disabled={pwBusy}>
+   894→              {pwBusy ? 'جارٍ التغيير…' : 'تغيير كلمة المرور'}
+   895→            </Button>
+   896→          </DialogFooter>
+   897→        </DialogContent>
+   898→      </Dialog>
+   899→
+   900→      {/* ===== تحميل بيانات تجريبية ===== */}
+   901→      <AlertDialog open={demoOpen} onOpenChange={v => { if (!v) setDemoOpen(false) }}>
+   902→        <AlertDialogContent>
+   903→          <AlertDialogHeader>
+   904→            <AlertDialogTitle>تحميل بيانات تجريبية؟</AlertDialogTitle>
+   905→            <AlertDialogDescription>
+   906→              بيانات اصطناعية موسومة بـ«تجريبي» — تعمل فقط على قاعدة فارغة بلا عمليات فعلية. لن تُخلط ببيانات حقيقية أبدًا.
+   907→            </AlertDialogDescription>
+   908→          </AlertDialogHeader>
+   909→          <AlertDialogFooter>
+   910→            <AlertDialogCancel className="h-10">رجوع</AlertDialogCancel>
+   911→            <AlertDialogAction className="h-10" disabled={demoBusy} onClick={e => { e.preventDefault(); void loadDemo() }}>
+   912→              {demoBusy ? 'جارٍ التحميل…' : 'تحميل البيانات التجريبية'}
+   913→            </AlertDialogAction>
+   914→          </AlertDialogFooter>
+   915→        </AlertDialogContent>
+   916→      </AlertDialog>
+   917→    </div>
+   918→  )
+   919→}
+   920→

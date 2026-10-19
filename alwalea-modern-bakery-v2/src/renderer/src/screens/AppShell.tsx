@@ -12,12 +12,14 @@ import PosScreen from './PosScreen'
 import CustomersScreen from './CustomersScreen'
 import InventoryScreen from './InventoryScreen'
 import ReportsScreen from './ReportsScreen'
+import SettingsScreen from './SettingsScreen'
 
 interface NavDef {
   key: string
   label: string
   icon: string
   perm: string
+  always?: boolean
 }
 
 const NAV: NavDef[] = [
@@ -26,7 +28,8 @@ const NAV: NavDef[] = [
   { key: 'products', label: 'المنتجات', icon: '🥐', perm: 'products.view' },
   { key: 'inventory', label: 'المخزون', icon: '📦', perm: 'inventory.view' },
   { key: 'customers', label: 'العملاء', icon: '👥', perm: 'customers.view' },
-  { key: 'reports', label: 'التقارير', icon: '📊', perm: 'reports.financial' }
+  { key: 'reports', label: 'التقارير', icon: '📊', perm: 'reports.financial' },
+  { key: 'settings', label: 'الإعدادات', icon: '⚙️', perm: '', always: true }
 ]
 
 export default function AppShell(props: {
@@ -42,7 +45,7 @@ export default function AppShell(props: {
   })
 
   const perms = props.user.perms
-  const items = NAV.filter((n) => perms.includes(n.perm))
+  const items = NAV.filter((n) => n.always || perms.includes(n.perm))
   const activeNav = NAV.find((n) => n.key === tab)
 
   const renderScreen = (): ReactNode => {
@@ -59,6 +62,8 @@ export default function AppShell(props: {
         return <InventoryScreen user={props.user} />
       case 'reports':
         return <ReportsScreen />
+      case 'settings':
+        return <SettingsScreen user={props.user} />
       default:
         return <DashboardScreen user={props.user} />
     }

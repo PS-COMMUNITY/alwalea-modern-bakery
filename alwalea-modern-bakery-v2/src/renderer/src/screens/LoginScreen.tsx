@@ -1,5 +1,5 @@
 // =============================================================
-// مخبز الولاء الحديث — شاشة تسجيل الدخول
+// مخبز الولاء الحديث — شاشة تسجيل الدخول (كلمة مرور واحدة — وضع الحساب الواحد)
 // =============================================================
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -8,8 +8,8 @@ import { call } from '../api'
 import { Field, Banner } from '../components/ui'
 
 export default function LoginScreen(props: { onLoggedIn: (res: LoginResult) => void }): ReactNode {
-  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [bizName, setBizName] = useState('مخبز الولاء الحديث')
@@ -27,13 +27,14 @@ export default function LoginScreen(props: { onLoggedIn: (res: LoginResult) => v
 
   const submit = async (): Promise<void> => {
     setError('')
-    if (!username.trim() || !password) {
-      setError('أدخل اسم المستخدم وكلمة المرور')
+    if (!password) {
+      setError('أدخل كلمة المرور')
       return
     }
     setBusy(true)
     try {
-      const res = await call<LoginResult>('auth.login', { username: username.trim(), password })
+      // الجلسة تُربط تلقائيًا بحساب المالك في الخادم — لا اسم مستخدم ولا اختيار أدوار
+      const res = await call<LoginResult>('auth.login', { password })
       props.onLoggedIn(res)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -47,7 +48,7 @@ export default function LoginScreen(props: { onLoggedIn: (res: LoginResult) => v
       <div className="auth-card">
         <div className="logo-big" aria-hidden>🥖</div>
         <div className="biz-name">{bizName}</div>
-        <div className="sub">سجّل الدخول للمتابعة</div>
+        <div className="sub">أدخل كلمة المرور للدخول إلى النظام</div>
         {error ? <Banner kind="error" text={error} /> : null}
         <form
           onSubmit={(e) => {
@@ -55,11 +56,36 @@ export default function LoginScreen(props: { onLoggedIn: (res: LoginResult) => v
             void submit()
           }}
         >
-          <Field label="اسم المستخدم">
-            <input value={username} onChange={(e) => setUsername(e.target.value)} dir="ltr" autoFocus />
-          </Field>
           <Field label="كلمة المرور">
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                type={showPw ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ paddingLeft: 40, width: '100%' }}
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw((v) => !v)}
+                aria-label={showPw ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                aria-pressed={showPw}
+                title={showPw ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                style={{
+                  position: 'absolute',
+                  left: 6,
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 15,
+                  padding: 4,
+                  lineHeight: 1,
+                  color: 'var(--muted)'
+                }}
+              >
+                {showPw ? '🙈' : '👁'}
+              </button>
+            </div>
           </Field>
           <button type="submit" className="btn primary" style={{ width: '100%' }} disabled={busy}>
             {busy ? 'جارٍ الدخول…' : 'دخول'}

@@ -1,12 +1,13 @@
 // =============================================================
 // مخبز الولاء الحديث — المصادقة: scrypt + جلسات + قفل محاولات
+// وضع الحساب الواحد: الدخول بكلمة مرور فقط، والجلسة تُربط بحساب المالك
 // =============================================================
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import type { BakeryDb } from '../db'
 import { ApiError, reqStr } from '../validate'
 import { permsForRole } from '../../shared/permissions'
 import type { SessionUser, LoginResult } from '../../shared/types'
-import { SvcCtx, businessName, setupCompleted } from './helpers'
+import { SvcCtx, businessName, setupCompleted, getSetting } from './helpers'
 
 const SESSION_HOURS = 24
 const MAX_ATTEMPTS = 5
@@ -68,11 +69,46 @@ export function requireSessionUser(db: BakeryDb, token: unknown): SessionUser {
   return user
 }
 
+interface UserFullRow {
+  id: number
+  username: string
+  name: string
+  role: string
+  password_hash: string
+  password_salt: string
+  active: number
+  failed_attempts: number
+  locked_until: string | null
+}
+
+/**
+ * وضع الحساب الواحد: تحديد حساب المالك النشط.
+ * الترتيب: owner_user_id المخزن من الإعداد ← أقدم مالك نشط ← المستخدم النشط الوحيد.
+ * لا توجد كلمات مرور ثابتة هنا — التحقق دائمًا مقابل التجزئة المخزنة.
+ */
+function resolveOwnerUser(db: BakeryDb): UserFullRow | null {
+  const ownerSetting = getSetting(db, 'owner_user_id')
+  if (ownerSetting) {
+    const bySetting = db.get<UserFullRow>(
+      "SELECT * FROM users WHERE id = ? AND role = 'OWNER' AND active = 1",
+      [Number(ownerSetting)]
+    )
+    if (bySetting) return bySetting
+  }
+  const firstOwner = db.get<UserFullRow>(
+    "SELECT * FROM users WHERE role = 'OWNER' AND active = 1 ORDER BY id ASC LIMIT 1"
+  )
+  if (firstOwner) return firstOwner
+  const onlyActive = db.query<UserFullRow>('SELECT * FROM users WHERE active = 1 ORDER BY id ASC')
+  return onlyActive.length === 1 ? (onlyActive[0] ?? null) : null
+}
+
 // ---------- القنوات ----------
 export function login(ctx: SvcCtx, payload: Record<string, unknown>): LoginResult {
   const db = ctx.db
-  const username = reqStr(payload.username, 'اسم المستخدم', 60).toLowerCase()
   const password = reqStr(payload.password, 'كلمة المرور', 200)
+  // توافق خلفي اختياري: إن أُرسل username يُستخدم، وإلا يُربط الدخول بالمالك تلقائيًا
+  const usernameArg = typeof payload.username === 'string' && payload.username.trim() ? payload.username.trim().toLowerCase() : null
   if (setupCompleted(db) === false) {
     throw new ApiError('لم يكتمل إعداد النشاط بعد', 409)
   }
@@ -80,27 +116,19 @@ export function login(ctx: SvcCtx, payload: Record<string, unknown>): LoginResul
   // تنظيف الجلسات المنتهية
   db.run('DELETE FROM sessions WHERE expires_at < ?', [db.now()])
 
-  const user = db.get<{
-    id: number
-    username: string
-    name: string
-    role: string
-    password_hash: string
-    password_salt: string
-    active: number
-    failed_attempts: number
-    locked_until: string | null
-  }>('SELECT * FROM users WHERE username = ?', [username])
+  const user = usernameArg
+    ? db.get<UserFullRow>('SELECT * FROM users WHERE username = ?', [usernameArg])
+    : resolveOwnerUser(db)
 
   const auditFailedLogin = (userId: number | null, extra: Record<string, unknown> = {}): void => {
     db.tx(() => {
-      ctx.audit('auth.login_failed', 'user', userId, { username, ...extra })
+      ctx.audit('auth.login_failed', 'user', userId, { username: user?.username ?? usernameArg ?? 'owner', ...extra })
     })
   }
 
   if (!user || user.active !== 1) {
     auditFailedLogin(user?.id ?? null)
-    throw new ApiError('بيانات الدخول غير صحيحة', 401)
+    throw new ApiError(usernameArg ? 'بيانات الدخول غير صحيحة' : 'تعذر تحديد حساب المالك — أعد الإعداد أو أنشئ حساب مالك', 401)
   }
 
   if (user.locked_until && new Date(user.locked_until).getTime() > Date.now()) {
@@ -119,9 +147,9 @@ export function login(ctx: SvcCtx, payload: Record<string, unknown>): LoginResul
         db.now(),
         user.id
       ])
-      ctx.audit('auth.login_failed', 'user', user.id, { username, attempts })
+      ctx.audit('auth.login_failed', 'user', user.id, { username: user.username, attempts })
     })
-    throw new ApiError('بيانات الدخول غير صحيحة', 401)
+    throw new ApiError('كلمة المرور غير صحيحة — حاول مرة أخرى', 401)
   }
 
   return db.tx(() => {
@@ -134,7 +162,7 @@ export function login(ctx: SvcCtx, payload: Record<string, unknown>): LoginResul
       db.now(),
       expires
     ])
-    ctx.audit('auth.login', 'user', user.id, { username })
+    ctx.audit('auth.login', 'user', user.id, { username: user.username })
     return { token, user: toSessionUser(user), businessName: businessName(db) }
   })
 }

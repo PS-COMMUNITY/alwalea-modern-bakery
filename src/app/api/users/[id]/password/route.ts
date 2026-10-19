@@ -16,7 +16,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const body = await req.json().catch(() => null)
     const newPassword = body && typeof body.newPassword === 'string' ? body.newPassword : ''
-    if (newPassword.length < 8) return fail(400, 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل')
+    if (newPassword.length < 4) return fail(400, 'كلمة المرور الجديدة يجب ألا تقل عن 4 أحرف/أرقام')
 
     const user = await db.user.findUnique({ where: { id } })
     if (!user) return fail(404, 'المستخدم غير موجود')

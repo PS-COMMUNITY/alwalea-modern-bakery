@@ -1,5 +1,6 @@
 // =============================================================
-// مخبز الولاء الحديث — معالج التهيئة لأول تشغيل (مرة واحدة)
+// مخبز الولاء الحديث — معالج التهيئة لأول تشغيل (مرة واحدة فقط)
+// وضع الحساب الواحد: اسم المستخدم owner يُنشأ تلقائيًا في الخادم
 // =============================================================
 import { useState } from 'react'
 import type { ReactNode } from 'react'
@@ -7,23 +8,25 @@ import type { LoginResult } from '../../../shared/types'
 import { call } from '../api'
 import { Field, Banner } from '../components/ui'
 
+/** كلمة المرور الأولية الافتراضية — تُخزَّن مُلبَّدة فورًا ويمكن تغييرها من الإعدادات لاحقًا */
+const DEFAULT_INITIAL_PASSWORD = '1234'
+
 export default function SetupScreen(props: { onDone: (res: LoginResult) => void }): ReactNode {
   const [businessName, setBusinessName] = useState('')
   const [ownerName, setOwnerName] = useState('')
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [password2, setPassword2] = useState('')
+  const [password, setPassword] = useState(DEFAULT_INITIAL_PASSWORD)
+  const [password2, setPassword2] = useState(DEFAULT_INITIAL_PASSWORD)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   const submit = async (): Promise<void> => {
     setError('')
-    if (!businessName.trim() || !ownerName.trim() || !username.trim()) {
+    if (!businessName.trim() || !ownerName.trim()) {
       setError('يرجى تعبئة جميع الحقول')
       return
     }
-    if (password.length < 6) {
-      setError('كلمة المرور يجب ألا تقل عن 6 أحرف')
+    if (password.length < 4) {
+      setError('كلمة المرور يجب ألا تقل عن 4 أحرف/أرقام')
       return
     }
     if (password !== password2) {
@@ -32,9 +35,9 @@ export default function SetupScreen(props: { onDone: (res: LoginResult) => void 
     }
     setBusy(true)
     try {
-      await call('setup.run', { businessName: businessName.trim(), ownerName: ownerName.trim(), username: username.trim(), password })
+      await call('setup.run', { businessName: businessName.trim(), ownerName: ownerName.trim(), password })
       // دخول تلقائي بعد الإعداد
-      const res = await call<LoginResult>('auth.login', { username: username.trim(), password })
+      const res = await call<LoginResult>('auth.login', { password })
       props.onDone(res)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -56,9 +59,6 @@ export default function SetupScreen(props: { onDone: (res: LoginResult) => void 
         <Field label="اسم المالك">
           <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} placeholder="الاسم الكامل" />
         </Field>
-        <Field label="اسم المستخدم">
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="owner" dir="ltr" />
-        </Field>
         <div className="form-row">
           <Field label="كلمة المرور">
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -67,6 +67,9 @@ export default function SetupScreen(props: { onDone: (res: LoginResult) => void 
             <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} />
           </Field>
         </div>
+        <p className="hint" style={{ color: 'var(--muted)', marginBottom: 10 }}>
+          4 أحرف/أرقام على الأقل (الافتراضية 1234) — تُخزَّن مُلبَّدة ويمكن تغييرها من الإعدادات.
+        </p>
         <button className="btn primary" style={{ width: '100%' }} disabled={busy} onClick={() => void submit()}>
           {busy ? 'جارٍ الإعداد…' : 'إنشاء النشاط وبدء العمل'}
         </button>

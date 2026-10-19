@@ -1,7 +1,7 @@
 // =============================================================
 // مخبز الولاء الحديث — الإعدادات + المستخدمون + سجل التدقيق
 // =============================================================
-import { hashPassword, makeSalt } from './auth'
+import { hashPassword, makeSalt, verifyPassword } from './auth'
 import { ApiError, reqStr, optStr, reqEnum, reqArr, obj, reqInt, reqMinor } from '../validate'
 import { ROLES } from '../../shared/permissions'
 import type { AppSettings, UserRow } from '../../shared/types'
@@ -78,7 +78,7 @@ export function createUserSvc(ctx: SvcCtx, payload: Record<string, unknown>): Us
   const name = reqStr(payload.name, 'الاسم', 120)
   const role = reqEnum(payload.role, 'الدور', ROLES)
   const password = reqStr(payload.password, 'كلمة المرور', 200)
-  if (password.length < 6) throw new ApiError('كلمة المرور يجب ألا تقل عن 6 أحرف')
+  if (password.length < 4) throw new ApiError('كلمة المرور يجب ألا تقل عن 4 أحرف')
   const id = ctx.db.tx(() => {
     if (ctx.db.get('SELECT id FROM users WHERE username = ?', [username])) {
       throw new ApiError('اسم المستخدم موجود مسبقًا', 409)
@@ -128,9 +128,22 @@ export function updateUser(ctx: SvcCtx, payload: Record<string, unknown>): UserR
 
 export function setPassword(ctx: SvcCtx, payload: Record<string, unknown>): { done: boolean } {
   const id = reqInt(payload.id, 'المعرف', 1)
-  const password = reqStr(payload.password, 'كلمة المرور', 200)
-  if (password.length < 6) throw new ApiError('كلمة المرور يجب ألا تقل عن 6 أحرف')
   const self = ctx.user?.id === id
+  // تغيير كلمة مرورك الخاصة يلزمه الكلمة الحالية (تكافأ أمني مع الويب)
+  if (self) {
+    const u = ctx.db.get<{ password_hash: string; password_salt: string }>(
+      'SELECT password_hash, password_salt FROM users WHERE id = ?',
+      [id]
+    )
+    if (u) {
+      const current = typeof payload.currentPassword === 'string' ? payload.currentPassword : ''
+      if (!verifyPassword(current, u.password_salt, u.password_hash)) {
+        throw new ApiError('كلمة المرور الحالية غير صحيحة', 401)
+      }
+    }
+  }
+  const password = reqStr(payload.password, 'كلمة المرور', 200)
+  if (password.length < 4) throw new ApiError('كلمة المرور يجب ألا تقل عن 4 أحرف')
   if (!self) {
     // تغيير كلمة مرور غيرك يتطلب users.manage — يفرضه الـ registry
   }
