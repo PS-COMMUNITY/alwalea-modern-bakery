@@ -1,0 +1,685 @@
+     1→'use client'
+     2→
+     3→// =============================================================
+     4→// المنتجات والتصنيفات — بحث وفلاتر، إضافة/تعديل، تعطيل/تفعيل (لا حذف نهائي)
+     5→// =============================================================
+     6→
+     7→import { useCallback, useEffect, useState } from 'react'
+     8→import { api, ApiError } from '@/lib/bakery/client'
+     9→import type { Category, Product } from '@/lib/bakery/types'
+    10→import { PRODUCT_TYPE_LABELS } from '@/lib/bakery/types'
+    11→import { useSession } from '@/components/bakery/shell'
+    12→import {
+    13→  EmptyState, ErrorBanner, LoadingRows, PageHeader, TableShell,
+    14→  qty as fmtQty,
+    15→} from '@/components/bakery/kit'
+    16→import { Button } from '@/components/ui/button'
+    17→import { Input } from '@/components/ui/input'
+    18→import { Label } from '@/components/ui/label'
+    19→import { Badge } from '@/components/ui/badge'
+    20→import { Switch } from '@/components/ui/switch'
+    21→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    22→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+    23→import {
+    24→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+    25→  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    26→} from '@/components/ui/alert-dialog'
+    27→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    28→import { useToast } from '@/hooks/use-toast'
+    29→import { cn } from '@/lib/utils'
+    30→import { FolderPlus, Package, Pencil, Plus, Power, Search, Tags } from 'lucide-react'
+    31→
+    32→function toMinorSafe(v: string): number | null {
+    33→  const s = v.trim()
+    34→  if (!s) return null
+    35→  const n = parseFloat(s)
+    36→  if (!isFinite(n) || n < 0) return null
+    37→  return Math.round(n * 100)
+    38→}
+    39→function toMilliSafe(v: string): number | null {
+    40→  const s = v.trim()
+    41→  if (!s) return null
+    42→  const n = parseFloat(s)
+    43→  if (!isFinite(n) || n < 0) return null
+    44→  return Math.round(n * 1000)
+    45→}
+    46→
+    47→const UNIT_OPTIONS = ['كغ', 'لتر', 'قطعة', 'عبوة', 'كيس']
+    48→const OTHER_UNIT = '__other__'
+    49→
+    50→type ProductForm = {
+    51→  name: string
+    52→  code: string
+    53→  barcode: string
+    54→  categoryId: string
+    55→  type: string
+    56→  unitChoice: string
+    57→  unitCustom: string
+    58→  trackStock: boolean
+    59→  price: string
+    60→  wholesalePrice: string
+    61→  cost: string
+    62→  minStock: string
+    63→}
+    64→
+    65→const EMPTY_FORM: ProductForm = {
+    66→  name: '', code: '', barcode: '', categoryId: '', type: 'FINISHED',
+    67→  unitChoice: 'قطعة', unitCustom: '', trackStock: true,
+    68→  price: '', wholesalePrice: '', cost: '', minStock: '0',
+    69→}
+    70→
+    71→type CatForm = { name: string; active: boolean }
+    72→
+    73→/** المنتج كما يعيده GET /api/products (يحمل رصيد المخزون الحالي) */
+    74→type ProductRow = Product & { stockMilli?: number }
+    75→
+    76→export function ProductsScreen() {
+    77→  const { settings, money, can } = useSession()
+    78→  const { toast } = useToast()
+    79→  const canManage = can('products.manage')
+    80→  const canManageCats = can('categories.manage')
+    81→
+    82→  // ===== فلاتر المنتجات =====
+    83→  const [qInput, setQInput] = useState('')
+    84→  const [q, setQ] = useState('')
+    85→  const [type, setType] = useState('')
+    86→  const [categoryId, setCategoryId] = useState('')
+    87→  const [activeFilter, setActiveFilter] = useState('')
+    88→
+    89→  const [rows, setRows] = useState<ProductRow[] | null>(null)
+    90→  const [loading, setLoading] = useState(true)
+    91→  const [error, setError] = useState('')
+    92→  const [categories, setCategories] = useState<Category[]>([])
+    93→
+    94→  // ===== نموذج المنتج =====
+    95→  const [formOpen, setFormOpen] = useState(false)
+    96→  const [editingId, setEditingId] = useState<string | null>(null)
+    97→  const [form, setForm] = useState<ProductForm>(EMPTY_FORM)
+    98→  const [formBusy, setFormBusy] = useState(false)
+    99→  const [formError, setFormError] = useState('')
+   100→
+   101→  // ===== تعطيل/تفعيل =====
+   102→  const [toggleTarget, setToggleTarget] = useState<Product | null>(null)
+   103→  const [toggleBusy, setToggleBusy] = useState(false)
+   104→
+   105→  // ===== التصنيفات =====
+   106→  const [catDlgOpen, setCatDlgOpen] = useState(false)
+   107→  const [catEditing, setCatEditing] = useState<Category | null>(null)
+   108→  const [catForm, setCatForm] = useState<CatForm>({ name: '', active: true })
+   109→  const [catBusy, setCatBusy] = useState(false)
+   110→  const [catsLoading, setCatsLoading] = useState(false)
+   111→  const [catsError, setCatsError] = useState('')
+   112→
+   113→  useEffect(() => {
+   114→    const t = setTimeout(() => setQ(qInput.trim()), 250)
+   115→    return () => clearTimeout(t)
+   116→  }, [qInput])
+   117→
+   118→  const loadCategories = useCallback(async () => {
+   119→    setCatsLoading(true)
+   120→    setCatsError('')
+   121→    try {
+   122→      const res = await api.get<{ items: Category[]; total: number }>('/api/categories')
+   123→      setCategories(res.items)
+   124→    } catch (e) {
+   125→      setCatsError(e instanceof ApiError ? e.message : 'تعذر تحميل التصنيفات')
+   126→    } finally {
+   127→      setCatsLoading(false)
+   128→    }
+   129→  }, [])
+   130→
+   131→  const load = useCallback(async () => {
+   132→    setLoading(true)
+   133→    setError('')
+   134→    try {
+   135→      const params = new URLSearchParams()
+   136→      if (q) params.set('q', q)
+   137→      if (type) params.set('type', type)
+   138→      if (categoryId) params.set('categoryId', categoryId)
+   139→      if (activeFilter) params.set('active', activeFilter)
+   140→      const res = await api.get<{ items: ProductRow[]; total: number }>(`/api/products?${params.toString()}`)
+   141→      setRows(res.items)
+   142→    } catch (e) {
+   143→      setError(e instanceof ApiError ? e.message : 'تعذر تحميل المنتجات')
+   144→      setRows(null)
+   145→    } finally {
+   146→      setLoading(false)
+   147→    }
+   148→  }, [activeFilter, categoryId, q, type])
+   149→
+   150→  useEffect(() => {
+   151→    void load()
+   152→  }, [load])
+   153→
+   154→  useEffect(() => {
+   155→    void loadCategories()
+   156→  }, [loadCategories])
+   157→
+   158→  // ===== فتح النموذج =====
+   159→  async function openEdit(p: Product) {
+   160→    setEditingId(p.id)
+   161→    setFormError('')
+   162→    setFormOpen(true)
+   163→    try {
+   164→      const full = await api.get<{ product: Product; stockMilli: number }>(`/api/products/${p.id}`)
+   165→      const prod = full.product
+   166→      const isKnown = UNIT_OPTIONS.includes(prod.baseUnit)
+   167→      setForm({
+   168→        name: prod.name,
+   169→        code: prod.code ?? '',
+   170→        barcode: prod.barcode ?? '',
+   171→        categoryId: prod.categoryId ?? '',
+   172→        type: prod.type,
+   173→        unitChoice: isKnown ? prod.baseUnit : OTHER_UNIT,
+   174→        unitCustom: isKnown ? '' : prod.baseUnit,
+   175→        trackStock: prod.trackStock,
+   176→        price: (prod.priceMinor / 100).toString(),
+   177→        wholesalePrice: prod.wholesalePriceMinor !== null ? (prod.wholesalePriceMinor / 100).toString() : '',
+   178→        cost: (prod.costMinor / 100).toString(),
+   179→        minStock: fmtQty(prod.minStockMilli),
+   180→      })
+   181→    } catch (e) {
+   182→      toast({
+   183→        title: 'تعذر تحميل بيانات المنتج',
+   184→        description: e instanceof ApiError ? e.message : 'خطأ غير متوقع',
+   185→        variant: 'destructive',
+   186→      })
+   187→      setFormOpen(false)
+   188→    }
+   189→  }
+   190→
+   191→  function openNew() {
+   192→    setEditingId(null)
+   193→    setForm(EMPTY_FORM)
+   194→    setFormError('')
+   195→    setFormOpen(true)
+   196→  }
+   197→
+   198→  async function submitForm() {
+   199→    setFormError('')
+   200→    const name = form.name.trim()
+   201→    if (!name) {
+   202→      setFormError('اسم المنتج مطلوب')
+   203→      return
+   204→    }
+   205→    const price = toMinorSafe(form.price)
+   206→    if (price === null) {
+   207→      setFormError('أدخل سعر بيع صحيحًا')
+   208→      return
+   209→    }
+   210→    const unit = form.unitChoice === OTHER_UNIT ? form.unitCustom.trim() : form.unitChoice
+   211→    if (!unit) {
+   212→      setFormError('أدخل وحدة القياس')
+   213→      return
+   214→    }
+   215→    const body: Record<string, unknown> = {
+   216→      name,
+   217→      code: form.code.trim() || null,
+   218→      barcode: form.barcode.trim() || null,
+   219→      categoryId: form.categoryId || null,
+   220→      type: form.type,
+   221→      baseUnit: unit,
+   222→      trackStock: form.trackStock,
+   223→      priceMinor: price,
+   224→      wholesalePriceMinor: toMinorSafe(form.wholesalePrice),
+   225→      costMinor: toMinorSafe(form.cost) ?? 0,
+   226→      minStockMilli: toMilliSafe(form.minStock) ?? 0,
+   227→    }
+   228→
+   229→    setFormBusy(true)
+   230→    try {
+   231→      if (editingId) {
+   232→        await api.put(`/api/products/${editingId}`, body)
+   233→        toast({ title: 'تم حفظ تعديلات المنتج' })
+   234→      } else {
+   235→        await api.post('/api/products', body)
+   236→        toast({ title: `تم إضافة المنتج «${name}»` })
+   237→      }
+   238→      setFormOpen(false)
+   239→      void load()
+   240→    } catch (e) {
+   241→      setFormError(e instanceof ApiError ? e.message : 'تعذر حفظ المنتج')
+   242→    } finally {
+   243→      setFormBusy(false)
+   244→    }
+   245→  }
+   246→
+   247→  async function toggleActive() {
+   248→    if (!toggleTarget) return
+   249→    setToggleBusy(true)
+   250→    try {
+   251→      await api.put(`/api/products/${toggleTarget.id}`, { active: !toggleTarget.active })
+   252→      toast({ title: toggleTarget.active ? `تم تعطيل «${toggleTarget.name}»` : `تم تفعيل «${toggleTarget.name}»` })
+   253→      setToggleTarget(null)
+   254→      void load()
+   255→    } catch (e) {
+   256→      toast({
+   257→        title: 'تعذر تغيير حالة المنتج',
+   258→        description: e instanceof ApiError ? e.message : 'خطأ غير متوقع',
+   259→        variant: 'destructive',
+   260→      })
+   261→    } finally {
+   262→      setToggleBusy(false)
+   263→    }
+   264→  }
+   265→
+   266→  // ===== التصنيفات =====
+   267→  function openCatNew() {
+   268→    setCatEditing(null)
+   269→    setCatForm({ name: '', active: true })
+   270→    setCatDlgOpen(true)
+   271→  }
+   272→  function openCatEdit(c: Category) {
+   273→    setCatEditing(c)
+   274→    setCatForm({ name: c.name, active: c.active })
+   275→    setCatDlgOpen(true)
+   276→  }
+   277→
+   278→  async function submitCat() {
+   279→    const name = catForm.name.trim()
+   280→    if (!name) return
+   281→    setCatBusy(true)
+   282→    try {
+   283→      if (catEditing) {
+   284→        await api.put(`/api/categories/${catEditing.id}`, { name, active: catForm.active })
+   285→        toast({ title: 'تم حفظ التصنيف' })
+   286→      } else {
+   287→        await api.post('/api/categories', { name })
+   288→        toast({ title: `تم إضافة التصنيف «${name}»` })
+   289→      }
+   290→      setCatDlgOpen(false)
+   291→      void loadCategories()
+   292→    } catch (e) {
+   293→      toast({
+   294→        title: 'تعذر حفظ التصنيف',
+   295→        description: e instanceof ApiError ? e.message : 'خطأ غير متوقع',
+   296→        variant: 'destructive',
+   297→      })
+   298→    } finally {
+   299→      setCatBusy(false)
+   300→    }
+   301→  }
+   302→
+   303→  const isLow = (p: ProductRow) => p.trackStock && (p.stockMilli ?? 0) <= Math.max(p.minStockMilli, 0)
+   304→
+   305→  return (
+   306→    <div>
+   307→      <PageHeader title="المنتجات والتصنيفات" subtitle="كتالوج المنتجات وتصنيفاتها — لا حذف نهائي، التعطيل فقط" />
+   308→
+   309→      <Tabs defaultValue="products">
+   310→        <TabsList className="mb-4 h-11">
+   311→          <TabsTrigger value="products" className="gap-2 px-4">
+   312→            <Package className="h-4 w-4" aria-hidden />
+   313→            المنتجات
+   314→          </TabsTrigger>
+   315→          <TabsTrigger value="categories" className="gap-2 px-4">
+   316→            <Tags className="h-4 w-4" aria-hidden />
+   317→            التصنيفات
+   318→          </TabsTrigger>
+   319→        </TabsList>
+   320→
+   321→        {/* ==================== تبويب المنتجات ==================== */}
+   322→        <TabsContent value="products">
+   323→          <div className="mb-4 flex flex-wrap items-end gap-2" role="search" aria-label="فلاتر المنتجات">
+   324→            <div className="relative min-w-52 flex-1">
+   325→              <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+   326→              <Input
+   327→                value={qInput}
+   328→                onChange={e => setQInput(e.target.value)}
+   329→                placeholder="بحث بالاسم أو الكود أو الباركود…"
+   330→                className="h-10 ps-9"
+   331→                aria-label="بحث في المنتجات"
+   332→                autoComplete="off"
+   333→              />
+   334→            </div>
+   335→            <div className="space-y-1">
+   336→              <Label className="text-xs">النوع</Label>
+   337→              <Select value={type || 'all'} onValueChange={v => setType(v === 'all' ? '' : v)}>
+   338→                <SelectTrigger className="h-10 w-36" aria-label="نوع المنتج"><SelectValue /></SelectTrigger>
+   339→                <SelectContent>
+   340→                  <SelectItem value="all">الكل</SelectItem>
+   341→                  {Object.entries(PRODUCT_TYPE_LABELS).map(([k, v]) => (
+   342→                    <SelectItem key={k} value={k}>{v}</SelectItem>
+   343→                  ))}
+   344→                </SelectContent>
+   345→              </Select>
+   346→            </div>
+   347→            <div className="space-y-1">
+   348→              <Label className="text-xs">التصنيف</Label>
+   349→              <Select value={categoryId || 'all'} onValueChange={v => setCategoryId(v === 'all' ? '' : v)}>
+   350→                <SelectTrigger className="h-10 w-40" aria-label="التصنيف"><SelectValue /></SelectTrigger>
+   351→                <SelectContent>
+   352→                  <SelectItem value="all">الكل</SelectItem>
+   353→                  {categories.map(c => (
+   354→                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+   355→                  ))}
+   356→                </SelectContent>
+   357→              </Select>
+   358→            </div>
+   359→            <div className="space-y-1">
+   360→              <Label className="text-xs">الحالة</Label>
+   361→              <Select value={activeFilter || 'all'} onValueChange={v => setActiveFilter(v === 'all' ? '' : v)}>
+   362→                <SelectTrigger className="h-10 w-32" aria-label="حالة المنتج"><SelectValue /></SelectTrigger>
+   363→                <SelectContent>
+   364→                  <SelectItem value="all">الكل</SelectItem>
+   365→                  <SelectItem value="true">مفعّل</SelectItem>
+   366→                  <SelectItem value="false">معطّل</SelectItem>
+   367→                </SelectContent>
+   368→              </Select>
+   369→            </div>
+   370→            {canManage ? (
+   371→              <Button type="button" className="h-10" onClick={openNew}>
+   372→                <Plus className="h-4 w-4" aria-hidden />
+   373→                منتج جديد
+   374→              </Button>
+   375→            ) : null}
+   376→          </div>
+   377→
+   378→          {error ? <ErrorBanner message={error} onRetry={load} /> : null}
+   379→
+   380→          {loading && !rows ? (
+   381→            <LoadingRows rows={6} />
+   382→          ) : rows && rows.length === 0 ? (
+   383→            <EmptyState
+   384→              title="لا منتجات مطابقة"
+   385→              hint="عدّل الفلاتر أو أضف منتجًا جديدًا لتبدأ البيع."
+   386→              action={canManage ? (
+   387→                <Button type="button" className="mt-2 h-10" onClick={openNew}>
+   388→                  <Plus className="h-4 w-4" aria-hidden />
+   389→                  منتج جديد
+   390→                </Button>
+   391→              ) : undefined}
+   392→            />
+   393→          ) : rows ? (
+   394→            <TableShell>
+   395→              <table className="w-full text-sm">
+   396→                <thead className="sticky top-0 z-10 bg-cream-200">
+   397→                  <tr>
+   398→                    <th className="p-3 text-start font-semibold">الاسم</th>
+   399→                    <th className="p-3 text-start font-semibold">الكود</th>
+   400→                    <th className="p-3 text-start font-semibold">التصنيف</th>
+   401→                    <th className="p-3 text-start font-semibold">النوع</th>
+   402→                    <th className="p-3 text-start font-semibold">الوحدة</th>
+   403→                    <th className="p-3 text-start font-semibold">سعر البيع</th>
+   404→                    <th className="p-3 text-start font-semibold">التكلفة</th>
+   405→                    <th className="p-3 text-start font-semibold">الرصيد</th>
+   406→                    <th className="p-3 text-start font-semibold">الحالة</th>
+   407→                    {canManage ? <th className="p-3 text-start font-semibold">إجراءات</th> : null}
+   408→                  </tr>
+   409→                </thead>
+   410→                <tbody>
+   411→                  {rows.map(p => (
+   412→                    <tr key={p.id} className="border-t transition-colors hover:bg-cream-100">
+   413→                      <td className="p-3">
+   414→                        <span className="font-semibold">{p.name}</span>
+   415→                        {p.barcode ? <span className="block font-mono text-xs text-muted-foreground" dir="ltr">{p.barcode}</span> : null}
+   416→                      </td>
+   417→                      <td className="p-3 font-mono text-xs" dir="ltr">{p.code ?? '—'}</td>
+   418→                      <td className="p-3">{p.category?.name ?? '—'}</td>
+   419→                      <td className="p-3">
+   420→                        <Badge variant="secondary">{PRODUCT_TYPE_LABELS[p.type] ?? p.type}</Badge>
+   421→                      </td>
+   422→                      <td className="p-3">{p.baseUnit}</td>
+   423→                      <td className="p-3 font-semibold tabular-nums">{money(p.priceMinor)}</td>
+   424→                      <td className="p-3 tabular-nums text-muted-foreground">{money(p.costMinor)}</td>
+   425→                      <td className={cn('p-3 font-semibold tabular-nums', isLow(p) && 'text-destructive')}>
+   426→                        {p.trackStock ? `${fmtQty(p.stockMilli ?? 0)} ${p.baseUnit}` : '—'}
+   427→                        {isLow(p) ? <span className="ms-1 text-xs">(الحد {fmtQty(p.minStockMilli)})</span> : null}
+   428→                      </td>
+   429→                      <td className="p-3">
+   430→                        {p.active ? (
+   431→                          <Badge className="bg-ok-600 text-white gap-1"><span aria-hidden>✓</span> مفعّل</Badge>
+   432→                        ) : (
+   433→                          <Badge variant="outline" className="gap-1"><span aria-hidden>⏸</span> معطّل</Badge>
+   434→                        )}
+   435→                      </td>
+   436→                      {canManage ? (
+   437→                        <td className="p-3">
+   438→                          <div className="flex gap-1.5">
+   439→                            <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => void openEdit(p)} aria-label={`تعديل ${p.name}`}>
+   440→                              <Pencil className="h-4 w-4" aria-hidden />
+   441→                              تعديل
+   442→                            </Button>
+   443→                            <Button
+   444→                              type="button"
+   445→                              variant={p.active ? 'ghost' : 'outline'}
+   446→                              size="sm"
+   447→                              className={cn('h-9', p.active && 'text-destructive hover:text-destructive')}
+   448→                              onClick={() => setToggleTarget(p)}
+   449→                              aria-label={p.active ? `تعطيل ${p.name}` : `تفعيل ${p.name}`}
+   450→                            >
+   451→                              <Power className="h-4 w-4" aria-hidden />
+   452→                              {p.active ? 'تعطيل' : 'تفعيل'}
+   453→                            </Button>
+   454→                          </div>
+   455→                        </td>
+   456→                      ) : null}
+   457→                    </tr>
+   458→                  ))}
+   459→                </tbody>
+   460→              </table>
+   461→            </TableShell>
+   462→          ) : null}
+   463→        </TabsContent>
+   464→
+   465→        {/* ==================== تبويب التصنيفات ==================== */}
+   466→        <TabsContent value="categories">
+   467→          <div className="mb-4 flex justify-end">
+   468→            {canManageCats ? (
+   469→              <Button type="button" className="h-10" onClick={openCatNew}>
+   470→                <FolderPlus className="h-4 w-4" aria-hidden />
+   471→                تصنيف جديد
+   472→              </Button>
+   473→            ) : null}
+   474→          </div>
+   475→
+   476→          {catsError ? <ErrorBanner message={catsError} onRetry={loadCategories} /> : null}
+   477→
+   478→          {catsLoading ? (
+   479→            <LoadingRows rows={3} />
+   480→          ) : categories.length === 0 ? (
+   481→            <EmptyState title="لا تصنيفات بعد" hint="أنشئ تصنيفات لتنظيم منتجاتك (خبز، معجنات، مواد خام…)." />
+   482→          ) : (
+   483→            <TableShell>
+   484→              <table className="w-full text-sm">
+   485→                <thead className="sticky top-0 z-10 bg-cream-200">
+   486→                  <tr>
+   487→                    <th className="p-3 text-start font-semibold">الاسم</th>
+   488→                    <th className="p-3 text-start font-semibold">عدد المنتجات</th>
+   489→                    <th className="p-3 text-start font-semibold">الحالة</th>
+   490→                    {canManageCats ? <th className="p-3 text-start font-semibold">إجراءات</th> : null}
+   491→                  </tr>
+   492→                </thead>
+   493→                <tbody>
+   494→                  {categories.map(c => (
+   495→                    <tr key={c.id} className="border-t transition-colors hover:bg-cream-100">
+   496→                      <td className="p-3 font-semibold">{c.name}</td>
+   497→                      <td className="p-3 tabular-nums">{c._count?.products ?? 0}</td>
+   498→                      <td className="p-3">
+   499→                        {c.active ? (
+   500→                          <Badge className="bg-ok-600 text-white gap-1"><span aria-hidden>✓</span> مفعّل</Badge>
+   501→                        ) : (
+   502→                          <Badge variant="outline" className="gap-1"><span aria-hidden>⏸</span> معطّل</Badge>
+   503→                        )}
+   504→                      </td>
+   505→                      {canManageCats ? (
+   506→                        <td className="p-3">
+   507→                          <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => openCatEdit(c)} aria-label={`تعديل تصنيف ${c.name}`}>
+   508→                            <Pencil className="h-4 w-4" aria-hidden />
+   509→                            تعديل
+   510→                          </Button>
+   511→                        </td>
+   512→                      ) : null}
+   513→                    </tr>
+   514→                  ))}
+   515→                </tbody>
+   516→              </table>
+   517→            </TableShell>
+   518→          )}
+   519→        </TabsContent>
+   520→      </Tabs>
+   521→
+   522→      {/* ===== نموذج المنتج (إضافة/تعديل) ===== */}
+   523→      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+   524→        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+   525→          <DialogHeader>
+   526→            <DialogTitle>{editingId ? 'تعديل منتج' : 'منتج جديد'}</DialogTitle>
+   527→            <DialogDescription>
+   528→              الأموال تُحفظ بالأغورة والكميات بالألفية تلقائيًا — أدخل القيم كما تظهر على الشاشة.
+   529→            </DialogDescription>
+   530→          </DialogHeader>
+   531→
+   532→          <div className="grid gap-3 sm:grid-cols-2">
+   533→            <div className="space-y-1.5 sm:col-span-2">
+   534→              <Label htmlFor="p-name">اسم المنتج *</Label>
+   535→              <Input id="p-name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="h-10" autoComplete="off" />
+   536→            </div>
+   537→            <div className="space-y-1.5">
+   538→              <Label htmlFor="p-code">الكود</Label>
+   539→              <Input id="p-code" value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} className="h-10" dir="ltr" autoComplete="off" />
+   540→            </div>
+   541→            <div className="space-y-1.5">
+   542→              <Label htmlFor="p-barcode">الباركود</Label>
+   543→              <Input id="p-barcode" value={form.barcode} onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))} className="h-10" dir="ltr" autoComplete="off" />
+   544→            </div>
+   545→            <div className="space-y-1.5">
+   546→              <Label>التصنيف</Label>
+   547→              <Select value={form.categoryId || '__none__'} onValueChange={v => setForm(f => ({ ...f, categoryId: v === '__none__' ? '' : v }))}>
+   548→                <SelectTrigger className="h-10 w-full" aria-label="التصنيف"><SelectValue /></SelectTrigger>
+   549→                <SelectContent>
+   550→                  <SelectItem value="__none__">بدون تصنيف</SelectItem>
+   551→                  {categories.map(c => (
+   552→                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+   553→                  ))}
+   554→                </SelectContent>
+   555→              </Select>
+   556→            </div>
+   557→            <div className="space-y-1.5">
+   558→              <Label>النوع</Label>
+   559→              <Select value={form.type} onValueChange={v => setForm(f => ({ ...f, type: v }))}>
+   560→                <SelectTrigger className="h-10 w-full" aria-label="نوع المنتج"><SelectValue /></SelectTrigger>
+   561→                <SelectContent>
+   562→                  {Object.entries(PRODUCT_TYPE_LABELS).map(([k, v]) => (
+   563→                    <SelectItem key={k} value={k}>{v}</SelectItem>
+   564→                  ))}
+   565→                </SelectContent>
+   566→              </Select>
+   567→            </div>
+   568→            <div className="space-y-1.5">
+   569→              <Label>وحدة القياس</Label>
+   570→              <Select value={form.unitChoice} onValueChange={v => setForm(f => ({ ...f, unitChoice: v }))}>
+   571→                <SelectTrigger className="h-10 w-full" aria-label="وحدة القياس"><SelectValue /></SelectTrigger>
+   572→                <SelectContent>
+   573→                  {UNIT_OPTIONS.map(u => (
+   574→                    <SelectItem key={u} value={u}>{u}</SelectItem>
+   575→                  ))}
+   576→                  <SelectItem value={OTHER_UNIT}>أخرى…</SelectItem>
+   577→                </SelectContent>
+   578→              </Select>
+   579→              {form.unitChoice === OTHER_UNIT ? (
+   580→                <Input
+   581→                  value={form.unitCustom}
+   582→                  onChange={e => setForm(f => ({ ...f, unitCustom: e.target.value }))}
+   583→                  placeholder="اكتب الوحدة (مثال: صينية)"
+   584→                  className="h-10"
+   585→                  autoComplete="off"
+   586→                  aria-label="وحدة قياس مخصصة"
+   587→                />
+   588→              ) : null}
+   589→            </div>
+   590→            <div className="flex items-end gap-3 pb-1">
+   591→              <div className="flex items-center gap-2">
+   592→                <Switch
+   593→                  id="p-track"
+   594→                  checked={form.trackStock}
+   595→                  onCheckedChange={v => setForm(f => ({ ...f, trackStock: v }))}
+   596→                />
+   597→                <Label htmlFor="p-track">تتبع المخزون</Label>
+   598→              </div>
+   599→            </div>
+   600→            <div className="space-y-1.5">
+   601→              <Label htmlFor="p-price">سعر البيع ({settings.currencySymbol}) *</Label>
+   602→              <Input id="p-price" inputMode="decimal" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} className="h-10 tabular-nums" autoComplete="off" />
+   603→            </div>
+   604→            <div className="space-y-1.5">
+   605→              <Label htmlFor="p-wprice">سعر الجملة (اختياري)</Label>
+   606→              <Input id="p-wprice" inputMode="decimal" value={form.wholesalePrice} onChange={e => setForm(f => ({ ...f, wholesalePrice: e.target.value }))} className="h-10 tabular-nums" autoComplete="off" />
+   607→            </div>
+   608→            <div className="space-y-1.5">
+   609→              <Label htmlFor="p-cost">التكلفة ({settings.currencySymbol})</Label>
+   610→              <Input id="p-cost" inputMode="decimal" value={form.cost} onChange={e => setForm(f => ({ ...f, cost: e.target.value }))} className="h-10 tabular-nums" autoComplete="off" />
+   611→            </div>
+   612→            <div className="space-y-1.5">
+   613→              <Label htmlFor="p-minstock">الحد الأدنى للمخزون ({form.unitChoice === OTHER_UNIT ? 'الوحدة' : form.unitChoice})</Label>
+   614→              <Input id="p-minstock" inputMode="decimal" value={form.minStock} onChange={e => setForm(f => ({ ...f, minStock: e.target.value }))} className="h-10 tabular-nums" autoComplete="off" />
+   615→            </div>
+   616→          </div>
+   617→
+   618→          {formError ? (
+   619→            <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-sm font-semibold text-destructive" role="alert">{formError}</p>
+   620→          ) : null}
+   621→
+   622→          <DialogFooter className="gap-2">
+   623→            <Button type="button" variant="outline" className="h-10" onClick={() => setFormOpen(false)} disabled={formBusy}>إلغاء</Button>
+   624→            <Button type="button" className="h-10" onClick={() => void submitForm()} disabled={formBusy}>
+   625→              {formBusy ? 'جارٍ الحفظ…' : editingId ? 'حفظ التعديلات' : 'إضافة المنتج'}
+   626→            </Button>
+   627→          </DialogFooter>
+   628→        </DialogContent>
+   629→      </Dialog>
+   630→
+   631→      {/* ===== تأكيد التعطيل/التفعيل ===== */}
+   632→      <AlertDialog open={!!toggleTarget} onOpenChange={v => { if (!v) setToggleTarget(null) }}>
+   633→        <AlertDialogContent>
+   634→          <AlertDialogHeader>
+   635→            <AlertDialogTitle>
+   636→              {toggleTarget?.active ? `تعطيل «${toggleTarget?.name}»؟` : `تفعيل «${toggleTarget?.name}»؟`}
+   637→            </AlertDialogTitle>
+   638→            <AlertDialogDescription>
+   639→              المنتج المستخدم في حركات لا يُحذف — يُعطّل فقط، ويختفي من نقطة البيع دون فقدان سجلاته.
+   640→            </AlertDialogDescription>
+   641→          </AlertDialogHeader>
+   642→          <AlertDialogFooter>
+   643→            <AlertDialogCancel className="h-10">رجوع</AlertDialogCancel>
+   644→            <AlertDialogAction
+   645→              className="h-10"
+   646→              disabled={toggleBusy}
+   647→              onClick={e => { e.preventDefault(); void toggleActive() }}
+   648→            >
+   649→              {toggleBusy ? 'جارٍ التنفيذ…' : 'تأكيد'}
+   650→            </AlertDialogAction>
+   651→          </AlertDialogFooter>
+   652→        </AlertDialogContent>
+   653→      </AlertDialog>
+   654→
+   655→      {/* ===== نموذج التصنيف ===== */}
+   656→      <Dialog open={catDlgOpen} onOpenChange={setCatDlgOpen}>
+   657→        <DialogContent className="max-w-sm">
+   658→          <DialogHeader>
+   659→            <DialogTitle>{catEditing ? 'تعديل تصنيف' : 'تصنيف جديد'}</DialogTitle>
+   660→            <DialogDescription>اسم التصنيف يجب أن يكون فريدًا.</DialogDescription>
+   661→          </DialogHeader>
+   662→          <div className="space-y-3">
+   663→            <div className="space-y-1.5">
+   664→              <Label htmlFor="cat-name">اسم التصنيف *</Label>
+   665→              <Input id="cat-name" value={catForm.name} onChange={e => setCatForm(f => ({ ...f, name: e.target.value }))} className="h-10" autoComplete="off" />
+   666→            </div>
+   667→            {catEditing ? (
+   668→              <div className="flex items-center gap-2">
+   669→                <Switch id="cat-active" checked={catForm.active} onCheckedChange={v => setCatForm(f => ({ ...f, active: v }))} />
+   670→                <Label htmlFor="cat-active">مفعّل</Label>
+   671→              </div>
+   672→            ) : null}
+   673→          </div>
+   674→          <DialogFooter className="gap-2">
+   675→            <Button type="button" variant="outline" className="h-10" onClick={() => setCatDlgOpen(false)} disabled={catBusy}>إلغاء</Button>
+   676→            <Button type="button" className="h-10" onClick={() => void submitCat()} disabled={catBusy || !catForm.name.trim()}>
+   677→              {catBusy ? 'جارٍ الحفظ…' : 'حفظ'}
+   678→            </Button>
+   679→          </DialogFooter>
+   680→        </DialogContent>
+   681→      </Dialog>
+   682→    </div>
+   683→  )
+   684→}
+   685→

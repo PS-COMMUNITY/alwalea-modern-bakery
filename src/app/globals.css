@@ -3,10 +3,41 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================================
+   مخبز الولاء الحديث — الهوية البصرية
+   بني داكن (كاكاو) + عاجي/كريمي + عنبري/نحاسي
+   خط Cairo العربي مضمّن محليًا (يعمل دون إنترنت)
+   ============================================================ */
+
+@font-face {
+  font-family: 'Cairo';
+  font-style: normal;
+  font-weight: 200 1000;
+  font-display: swap;
+  src: url('/fonts/cairo-1.woff2') format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
+}
+@font-face {
+  font-family: 'Cairo';
+  font-style: normal;
+  font-weight: 200 1000;
+  font-display: swap;
+  src: url('/fonts/cairo-2.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Cairo';
+  font-style: normal;
+  font-weight: 200 1000;
+  font-display: swap;
+  src: url('/fonts/cairo-3.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -41,82 +72,162 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* ألوان الهوية المخصصة */
+  --color-cocoa-950: #24120b;
+  --color-cocoa-900: #2f1a10;
+  --color-cocoa-800: #3e2723;
+  --color-cocoa-700: #4e342e;
+  --color-cocoa-600: #5d4037;
+  --color-cocoa-500: #6d4c41;
+  --color-cocoa-400: #8d6e63;
+  --color-cocoa-300: #a1887f;
+  --color-cocoa-200: #bcaaa4;
+  --color-cocoa-100: #d7ccc8;
+  --color-cocoa-50: #efebe9;
+  --color-cream-50: #fffaf4;
+  --color-cream-100: #fff8f0;
+  --color-cream-200: #f7efe3;
+  --color-cream-300: #efe3d0;
+  --color-copper-700: #9a5a28;
+  --color-copper-600: #b06a2e;
+  --color-copper-500: #c77b3f;
+  --color-copper-400: #d69258;
+  --color-copper-300: #e3ab77;
+  --color-copper-100: #f4dcc4;
+  --color-ok-600: #2e7d32;
+  --color-ok-100: #e6f2e7;
 }
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --background: #faf5ee;
+  --foreground: #2f1a10;
+  --card: #ffffff;
+  --card-foreground: #2f1a10;
+  --popover: #ffffff;
+  --popover-foreground: #2f1a10;
+  --primary: #3e2723;
+  --primary-foreground: #fff8f0;
+  --secondary: #f3ead9;
+  --secondary-foreground: #3e2723;
+  --muted: #f3ead9;
+  --muted-foreground: #7a6355;
+  --accent: #f4dcc4;
+  --accent-foreground: #6b3f1d;
+  --destructive: #c62828;
+  --border: #e8dccb;
+  --input: #e0d3bf;
+  --ring: #c77b3f;
+  --chart-1: #c77b3f;
+  --chart-2: #6d4c41;
+  --chart-3: #2e7d32;
+  --chart-4: #d69258;
+  --chart-5: #8d6e63;
+  --sidebar: #2f1a10;
+  --sidebar-foreground: #efe3d0;
+  --sidebar-primary: #c77b3f;
+  --sidebar-primary-foreground: #fff8f0;
+  --sidebar-accent: #3e2723;
+  --sidebar-accent-foreground: #fff8f0;
+  --sidebar-border: #4e342e;
+  --sidebar-ring: #c77b3f;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #1c0f08;
+  --foreground: #f3ead9;
+  --card: #2a180d;
+  --card-foreground: #f3ead9;
+  --popover: #2a180d;
+  --popover-foreground: #f3ead9;
+  --primary: #c77b3f;
+  --primary-foreground: #24120b;
+  --secondary: #3e2723;
+  --secondary-foreground: #f3ead9;
+  --muted: #3e2723;
+  --muted-foreground: #bcaaa4;
+  --accent: #4e342e;
+  --accent-foreground: #f4dcc4;
+  --destructive: #ef5350;
+  --border: #4e342e;
+  --input: #4e342e;
+  --ring: #d69258;
+  --chart-1: #d69258;
+  --chart-2: #a1887f;
+  --chart-3: #66bb6a;
+  --chart-4: #e3ab77;
+  --chart-5: #8d6e63;
+  --sidebar: #170c05;
+  --sidebar-foreground: #efe3d0;
+  --sidebar-primary: #c77b3f;
+  --sidebar-primary-foreground: #24120b;
+  --sidebar-accent: #3e2723;
+  --sidebar-accent-foreground: #fff8f0;
+  --sidebar-border: #3e2723;
+  --sidebar-ring: #c77b3f;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    direction: rtl;
+  }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif;
+  }
+  /* أرقام أوضح في الجداول */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* شريط تمرير أنيق */
+.nice-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.nice-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.nice-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+.nice-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ring);
+}
+
+/* ============================================================
+   إيصال حراري 80مم — يُطبع فقط عبر @media print
+   ============================================================ */
+.receipt-80mm {
+  width: 80mm;
+  font-family: 'Cairo', Tahoma, sans-serif;
+  direction: rtl;
+  color: #000;
+  background: #fff;
+}
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .receipt-print-area,
+  .receipt-print-area * {
+    visibility: visible !important;
+  }
+  .receipt-print-area {
+    position: absolute !important;
+    inset: 0 auto auto 50% !important;
+    transform: translateX(50%) !important;
+    margin: 0 !important;
+    padding: 4mm 2mm !important;
+    width: 80mm !important;
+  }
+  @page {
+    size: 80mm auto;
+    margin: 0;
   }
 }

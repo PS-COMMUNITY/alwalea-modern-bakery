@@ -1,8 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// مخبز الولاء الحديث — مخطط قاعدة البيانات
+// الأموال بوحدة أصغر للعملة (أغورة، Int) — الكميات بوحدة ألفية (×1000، Int)
+// ملاحظة: SQLite + Prisma لا يدعم enum — القيم النصية موثقة في worklog.md
 
 generator client {
   provider = "prisma-client-js"
@@ -13,20 +11,536 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ============ الإعدادات والمستخدمون ============
+
+model Settings {
+  id                       Int      @id @default(1)
+  businessName             String   @default("مخبز الولاء الحديث")
+  ownerName                String?
+  phone                    String?
+  address                  String?
+  currencyCode             String   @default("ILS")
+  currencySymbol           String   @default("₪")
+  currencyDecimals         Int      @default(2)
+  taxEnabled               Boolean  @default(false)
+  taxRateBp                Int      @default(0) // نقاط أساس: 1700 = 17%
+  negativeStockAllowed     Boolean  @default(false)
+  receiptWidth             Int      @default(80) // 58 أو 80 مم
+  idleLockMinutes          Int      @default(15)
+  requireCustomerForCredit Boolean  @default(true)
+  setupCompleted           Boolean  @default(false)
+  demoDataLoaded           Boolean  @default(false)
+  schemaVersion            String   @default("1.0.0")
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 }
 
-model Post {
+model User {
+  id             String    @id @default(cuid())
+  username       String    @unique
+  displayName    String
+  role           String // OWNER | MANAGER | CASHIER | STOCK | PRODUCTION | DISTRIBUTION | ACCOUNTANT
+  passwordHash   String
+  passwordSalt   String
+  pinHash        String?
+  pinSalt        String?
+  active         Boolean   @default(true)
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  sessions       Session[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  @@index([userId])
+}
+
+// ============ الكتالوج ============
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  products  Product[]
+}
+
+model Product {
+  id                   String   @id @default(cuid())
+  code                 String?  @unique
+  barcode              String?  @unique
+  name                 String
+  categoryId           String?
+  category             Category? @relation(fields: [categoryId], references: [id])
+  type                 String   @default("FINISHED") // RAW | FINISHED | TRADE
+  baseUnit             String   @default("قطعة") // كغ | لتر | قطعة | عبوة...
+  trackStock           Boolean  @default(true)
+  priceMinor           Int      @default(0) // سعر التجزئة
+  wholesalePriceMinor  Int? // سعر الجملة
+  costMinor            Int      @default(0) // آخر تكلفة معروفة
+  minStockMilli        Int      @default(0)
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  saleItems            SaleItem[]
+  purchaseItems        PurchaseItem[]
+  movements            StockMovement[]
+  recipeInputs         RecipeItem[]
+  recipeOutputs        Recipe[] @relation("RecipeOutput")
+  tripLoads            TripLoad[]
+  tripSales            TripSale[]
+  tripReturns          TripReturn[]
+  @@index([name])
+  @@index([active])
+}
+
+// ============ العملاء والموردون والدفاتر ============
+
+model Customer {
+  id                String   @id @default(cuid())
+  name              String
+  phone             String?
+  address           String?
+  notes             String?
+  creditLimitMinor  Int? // null = بلا حد
+  defaultPriceType  String   @default("RETAIL") // RETAIL | WHOLESALE
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  ledgerEntries     CustomerLedgerEntry[]
+  payments          SalePayment[]
+  sales             Sale[]
+  tripSales         TripSale[]
+  @@index([name])
+}
+
+model Supplier {
   id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
+  name      String
+  phone     String?
+  address   String?
+  notes     String?
+  active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  ledgerEntries SupplierLedgerEntry[]
+  payments  PurchasePayment[]
+  purchases Purchase[]
+  @@index([name])
+}
+
+// + تزيد الدين على العميل، − تنقصه
+model CustomerLedgerEntry {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  date       DateTime @default(now())
+  type       String // INVOICE | PAYMENT | RETURN | ADJUSTMENT | OPENING
+  refType    String?
+  refId      String?
+  amountMinor Int // موقعة
+  note       String?
+  userId     String?
+  createdAt  DateTime @default(now())
+  @@index([customerId, date])
+}
+
+// + تزيد مستحقات المورد علينا، − تنقصها
+model SupplierLedgerEntry {
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  date       DateTime @default(now())
+  type       String // INVOICE | PAYMENT | RETURN | ADJUSTMENT | OPENING
+  refType    String?
+  refId      String?
+  amountMinor Int // موقعة
+  note       String?
+  userId     String?
+  createdAt  DateTime @default(now())
+  @@index([supplierId, date])
+}
+
+// ============ البيع ============
+
+model Sale {
+  id             String    @id @default(cuid())
+  invoiceNo      String    @unique
+  date           DateTime  @default(now())
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id])
+  customerName   String    @default("عميل نقدي")
+  source         String    @default("POS") // POS | DISTRIBUTION
+  subtotalMinor  Int
+  discountMinor  Int       @default(0)
+  taxMinor       Int       @default(0)
+  totalMinor     Int
+  paidMinor      Int       @default(0)
+  creditMinor    Int       @default(0)
+  paymentStatus  String    @default("PAID") // PAID | PARTIAL | UNPAID
+  status         String    @default("COMPLETED") // COMPLETED | CANCELLED
+  clientRef      String?   @unique // منع الترحيل المزدوج (نقر مزدوج/إعادة إرسال)
+  shiftId        String?
+  tripId         String?
+  note           String?
+  userId         String
+  voidReason     String?
+  voidedAt       DateTime?
+  voidedByUserId String?
+  createdAt      DateTime  @default(now())
+  items          SaleItem[]
+  payments       SalePayment[]
+  @@index([date])
+  @@index([customerId])
+  @@index([status])
+}
+
+model SaleItem {
+  id             String  @id @default(cuid())
+  saleId         String
+  sale           Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product @relation(fields: [productId], references: [id])
+  productName    String
+  qtyMilli       Int
+  priceMinor     Int
+  discountMinor  Int     @default(0)
+  costMinor      Int     @default(0)
+  lineTotalMinor Int
+  @@index([saleId])
+  @@index([productId])
+}
+
+// مدفوعات مبيعات (وقت البيع) وتحصيلات لاحقة (saleId = null مع customerId)
+model SalePayment {
+  id          String    @id @default(cuid())
+  saleId      String?
+  sale        Sale?     @relation(fields: [saleId], references: [id])
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id])
+  date        DateTime  @default(now())
+  method      String    @default("CASH") // CASH | CARD | TRANSFER | CHEQUE
+  amountMinor Int
+  ref         String?
+  note        String?
+  shiftId     String?
+  tripId      String? // النقد المحصل في جولة توزيع
+  userId      String
+  @@index([date])
+  @@index([saleId])
+  @@index([customerId])
+}
+
+// ============ الشراء ============
+
+model Purchase {
+  id             String    @id @default(cuid())
+  invoiceNo      String    @unique
+  date           DateTime  @default(now())
+  supplierId     String
+  supplier       Supplier  @relation(fields: [supplierId], references: [id])
+  supplierName   String
+  subtotalMinor  Int
+  discountMinor  Int       @default(0)
+  totalMinor     Int
+  paidMinor      Int       @default(0)
+  paymentStatus  String    @default("PAID") // PAID | PARTIAL | UNPAID
+  status         String    @default("COMPLETED") // COMPLETED | CANCELLED
+  clientRef      String?   @unique // منع الترحيل المزدوج
+  shiftId        String?
+  note           String?
+  userId         String
+  voidReason     String?
+  voidedAt       DateTime?
+  voidedByUserId String?
+  createdAt      DateTime  @default(now())
+  items          PurchaseItem[]
+  payments       PurchasePayment[]
+  @@index([date])
+  @@index([supplierId])
+}
+
+model PurchaseItem {
+  id             String   @id @default(cuid())
+  purchaseId     String
+  purchase       Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id])
+  productName    String
+  qtyMilli       Int
+  costMinor      Int
+  lineTotalMinor Int
+  @@index([purchaseId])
+  @@index([productId])
+}
+
+model PurchasePayment {
+  id          String    @id @default(cuid())
+  purchaseId  String?
+  purchase    Purchase? @relation(fields: [purchaseId], references: [id])
+  supplierId  String?
+  supplier    Supplier? @relation(fields: [supplierId], references: [id])
+  date        DateTime  @default(now())
+  method      String    @default("CASH")
+  amountMinor Int
+  ref         String?
+  note        String?
+  shiftId     String?
+  userId      String
+  @@index([date])
+  @@index([purchaseId])
+  @@index([supplierId])
+}
+
+// ============ المخزون ============
+
+model StockMovement {
+  id            String   @id @default(cuid())
+  date          DateTime @default(now())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  qtyMilli      Int // موقعة: + دخول، − خروج
+  type          String // OPENING | PURCHASE | SALE | SALE_RETURN | PURCHASE_RETURN | PRODUCTION_IN | PRODUCTION_OUT | WASTE | ADJUSTMENT | TRIP_OUT | TRIP_RETURN
+  refType       String?
+  refId         String?
+  unitCostMinor Int?
+  note          String?
+  userId        String
+  createdAt     DateTime @default(now())
+  @@index([productId, date])
+  @@index([date])
+  @@index([type])
+}
+
+// ============ الإنتاج ============
+
+model Recipe {
+  id              String   @id @default(cuid())
+  name            String
+  outputProductId String
+  outputProduct   Product  @relation("RecipeOutput", fields: [outputProductId], references: [id])
+  outputQtyMilli  Int
+  notes           String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  items           RecipeItem[]
+  batches         ProductionBatch[]
+}
+
+model RecipeItem {
+  id        String  @id @default(cuid())
+  recipeId  String
+  recipe    Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  qtyMilli  Int
+  @@index([recipeId])
+}
+
+model ProductionBatch {
+  id                 String    @id @default(cuid())
+  batchNo            String    @unique
+  recipeId           String
+  recipe             Recipe    @relation(fields: [recipeId], references: [id])
+  date               DateTime  @default(now())
+  plannedQtyMilli    Int
+  actualQtyMilli     Int
+  wasteQtyMilli      Int       @default(0)
+  materialsCostMinor Int
+  unitCostMinor      Int
+  status             String    @default("COMPLETED") // COMPLETED | CANCELLED
+  notes              String?
+  userId             String
+  voidReason         String?
+  voidedAt           DateTime?
+  createdAt          DateTime  @default(now())
+  @@index([date])
+}
+
+// ============ المصروفات ============
+
+model ExpenseCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  active    Boolean   @default(true)
+  expenses  Expense[]
+}
+
+model Expense {
+  id                String    @id @default(cuid())
+  date              DateTime  @default(now())
+  categoryId        String
+  category          ExpenseCategory @relation(fields: [categoryId], references: [id])
+  amountMinor       Int
+  method            String    @default("CASH")
+  beneficiary       String?
+  note              String?
+  status            String    @default("COMPLETED") // COMPLETED | CANCELLED
+  shiftId           String?
+  userId            String
+  voidReason        String?
+  voidedAt          DateTime?
+  voidedByUserId    String?
+  createdAt         DateTime  @default(now())
+  @@index([date])
+  @@index([categoryId])
+}
+
+// ============ الخزينة والورديات ============
+
+model Shift {
+  id                String    @id @default(cuid())
+  openedAt          DateTime  @default(now())
+  closedAt          DateTime?
+  openingCashMinor  Int       @default(0)
+  expectedCashMinor Int?
+  countedCashMinor  Int?
+  differenceMinor   Int?
+  status            String    @default("OPEN") // OPEN | CLOSED
+  userId            String // من فتح
+  closedByUserId    String?
+  notes             String?
+  cashMovements     CashMovement[]
+  @@index([status])
+}
+
+// مبالغ موقعة: + قبض، − صرف
+model CashMovement {
+  id        String   @id @default(cuid())
+  shiftId   String
+  shift     Shift    @relation(fields: [shiftId], references: [id])
+  date      DateTime @default(now())
+  type      String // OPENING_CASH | SALE_CASH | CUSTOMER_PAYMENT | PURCHASE_PAYMENT | EXPENSE | DRAWER_OUT | DEPOSIT | TRIP_CASH_IN | WASTE_CASH_OUT | ADJUSTMENT
+  amountMinor Int // موقعة
+  refType   String?
+  refId     String?
+  note      String?
+  userId    String
+  @@index([shiftId])
+  @@index([date])
+}
+
+// ============ التوزيع ============
+
+model DistributionRep {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  active    Boolean  @default(true)
+  routes    DistributionRoute[]
+  trips     DistributionTrip[]
+}
+
+model DistributionRoute {
+  id        String   @id @default(cuid())
+  name      String
+  repId     String?
+  rep       DistributionRep? @relation(fields: [repId], references: [id])
+  active    Boolean  @default(true)
+  trips     DistributionTrip[]
+}
+
+model DistributionTrip {
+  id              String    @id @default(cuid())
+  tripNo          String    @unique
+  date            DateTime  @default(now())
+  repId           String
+  rep             DistributionRep @relation(fields: [repId], references: [id])
+  routeId         String?
+  route           DistributionRoute? @relation(fields: [routeId], references: [id])
+  status          String    @default("OPEN") // OPEN | SETTLED
+  settledAt       DateTime?
+  notes           String?
+  userId          String
+  settledByUserId String?
+  createdAt       DateTime  @default(now())
+  loads           TripLoad[]
+  sales           TripSale[]
+  returns         TripReturn[]
+  @@index([date])
+  @@index([repId])
+}
+
+model TripLoad {
+  id          String   @id @default(cuid())
+  tripId      String
+  trip        DistributionTrip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  qtyMilli    Int
+  @@index([tripId])
+}
+
+// بيع داخل الجولة — يُرحّل كفاتورة Sale عند التسوية (saleId)
+model TripSale {
+  id           String    @id @default(cuid())
+  tripId       String
+  trip         DistributionTrip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product   @relation(fields: [productId], references: [id])
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  customerName String    @default("عميل نقدي")
+  qtyMilli     Int
+  priceMinor   Int
+  lineTotalMinor Int
+  paymentType  String    @default("CASH") // CASH | CREDIT
+  saleId       String?
+  createdAt    DateTime  @default(now())
+  @@index([tripId])
+}
+
+model TripReturn {
+  id          String   @id @default(cuid())
+  tripId      String
+  trip        DistributionTrip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  qtyMilli    Int
+  condition   String   @default("GOOD") // GOOD | DAMAGED
+  note        String?
+  createdAt   DateTime @default(now())
+  @@index([tripId])
+}
+
+// ============ التدقيق والتسلسلات ============
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  date       DateTime @default(now())
+  userId     String?
+  username   String?
+  action     String // LOGIN | LOGIN_FAILED | LOGOUT | SETUP | SALE | SALE_CANCEL | PURCHASE | PURCHASE_CANCEL | PRODUCTION | PRODUCTION_CANCEL | TRIP | TRIP_SETTLE | EXPENSE | EXPENSE_CANCEL | STOCK_ADJUST | OPENING | USER_CREATE | USER_UPDATE | PRICE_UPDATE | SETTINGS_UPDATE | BACKUP | RESTORE | IMPORT | EXPORT | PAYMENT | ADJUSTMENT
+  entityType String?
+  entityId   String?
+  details    String? // JSON
+  createdAt  DateTime @default(now())
+  @@index([date])
+  @@index([action])
+  @@index([userId])
+}
+
+model Sequence {
+  id    String @id // مثل "S-20250101"
+  value Int    @default(0)
+}
+
+model BackupRecord {
+  id            String   @id @default(cuid())
+  fileName      String
+  createdAt     DateTime @default(now())
+  sizeBytes     Int
+  schemaVersion String
+  note          String?
+  kind          String   @default("MANUAL") // MANUAL | AUTO | PRE_RESTORE
 }

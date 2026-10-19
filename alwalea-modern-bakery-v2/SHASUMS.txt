@@ -1,0 +1,2 @@
+674814f3784d3bd46ae9f72e6f9cb1d12ca01890258442398cf00c2ace5560d7  Alwalea Modern Bakery-1.0.0.AppImage
+b25b1d160eee3912810ca5f811e2ccfa5f882918afb9cb3e088a75c4ae8d8177  Alwalea Modern Bakery-1.0.0-win.zip

@@ -1,0 +1,38 @@
+appId: com.alwalea.bakery
+productName: Alwalea Modern Bakery
+copyright: © Alwalea Modern Bakery
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+# sql.js (WASM) يبقى داخل asar — نقرأ ملف wasm عبر fs المدعوم من asar
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup.${ext}
+
+linux:
+  target:
+    - AppImage
+  icon: build/icon.png
+  category: Office
+  maintainer: Alwalea Modern Bakery
+
+electronLanguages:
+  - ar
+  - en
