@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { fail, handle, ok, requirePerm } from '@/lib/bakery/auth'
+import { analyzeBackupUsers } from '@/lib/bakery/backup-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -70,12 +71,25 @@ export async function POST(req: NextRequest) {
     const unknownTables = Object.keys(tables).filter(t => !knownAliasKeys.has(t))
     for (const t of unknownTables) warnings.push(`جدول غير معروف في الملف: ${t} — سيُتجاهل`)
 
+    // جاهزية بيانات المصادقة: النسخ المغقّمة (بلا هاشات) تستلزم تعيين كلمة مرور مالك جديد قبل الاعتماد
+    const usersRows = (pickTables(tables, 'users') as Record<string, unknown>[]).filter(
+      u => u && typeof u === 'object' && !Array.isArray(u)
+    )
+    const auth = analyzeBackupUsers(usersRows)
+    if (!auth.authReady) {
+      warnings.push(
+        `النسخة لا تتضمن بيانات تحقق صالحة (${auth.invalid} من ${auth.total} مستخدمًا بلا هاش) — ` +
+        'الاستعادة تتطلب تعيين كلمة مرور جديدة لحساب المالك قبل الاعتماد'
+      )
+    }
+
     return ok({
       exportedAt: parsed.exportedAt ?? null,
       schemaVersion: parsed.schemaVersion,
       tables: summary,
       totalRows: summary.reduce((a, b) => a + b.rows, 0),
       warnings,
+      auth,
       confirmRequired: true,
       message: 'الاستعادة ستستبدل كل البيانات الحالية بالكامل. تأكد من وجود نسخة احتياطية حديثة أولًا.',
     })

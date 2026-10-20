@@ -2,12 +2,22 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, ok, requirePerm } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
-
-export const dynamic = 'force-dynamic'
-
-type TableRow = Record<string, unknown>
+import { analyzeBackupUsers, hasValidAuthMaterial, MIN_OWNER_PASSWORD_LENGTH, transformBackupUsers, type TableRow } from '@/lib/bakery/backup-auth'
 
 /** استعادة نسخة احتياطية — تستبدل كل البيانات بعد فحص الإصدار */
+export const dynamic = 'force-dynamic'
+
+/**
+ * استعادة نسخة احتياطية — تستبدل كل البيانات بعد فحص الإصدار وفحص جاهزية بيانات المصادقة.
+ *
+ * سياسة المصادقة (فحص مسبق قبل أي تغيير):
+ * - نسخة بكل المستخدمين ببيانات تحقق صالحة (هاش+ملح scrypt سليمان) → تُستعاد كما هي.
+ * - نسخة فيها أي مستخدم بهاش/ملح فارغ أو غير صالح (كالنسخ المغقّمة القابلة للتداول) →
+ *   تُرفض برسالة واضحة ما لم يُرسل newOwnerPassword (≥ 4 محارف) لتعيينه للمالك
+ *   عبر آلية المصادقة الحالية (scrypt + ملح مستقل) — وبقية المستخدمين بلا بيانات
+ *   صالحة يُدخلون ببيانات اعتماد مقفلة عشوائية (لا كلمة ثابتة ولا باب خلفي).
+ * - كل الاستعادة داخل معاملة واحدة: أي فشل يُرجع القاعدة كما كانت دون حالة جزئية.
+ */
 export async function POST(req: NextRequest) {
   return handle(async () => {
     const r = await requirePerm(req, 'backup.manage')
@@ -17,6 +27,10 @@ export async function POST(req: NextRequest) {
     const raw = body && typeof body.data === 'string' ? body.data : null
     if (!raw) return fail(400, 'لم يُرسل محتوى الملف')
     if (body.confirm !== true) return fail(400, 'يجب تأكيد الاستعادة (confirm: true) بعد مراجعة المعاينة')
+    const newOwnerPassword = typeof body.newOwnerPassword === 'string' ? body.newOwnerPassword : null
+    if (newOwnerPassword !== null && newOwnerPassword.length < MIN_OWNER_PASSWORD_LENGTH) {
+      return fail(422, `كلمة مرور المالك الجديدة يجب ألا تقل عن ${MIN_OWNER_PASSWORD_LENGTH} أحرف/أرقام`)
+    }
 
     let parsed: { schemaVersion?: unknown; tables?: Record<string, TableRow[]> }
     try {
@@ -48,6 +62,31 @@ export async function POST(req: NextRequest) {
     }
 
     const restored: Record<string, number> = {}
+
+    // ===== فحص جاهزية المصادقة قبل أي تغيير — الرفض هنا لا يلمس القاعدة إطلاقًا =====
+    const usersRaw = pick('users') as TableRow[]
+    if (usersRaw.length === 0) return fail(422, 'النسخة لا تحتوي مستخدمين — رُفضت الاستعادة دون أي تغيير')
+    const readiness = analyzeBackupUsers(usersRaw)
+    if (!readiness.authReady) {
+      if (!newOwnerPassword) {
+        return fail(422,
+          `النسخة لا تتضمن بيانات تحقق صالحة (${readiness.invalid} من ${readiness.total} مستخدمًا بلا هاش كلمة مرور) — ` +
+          'لا يمكن استعادتها كما هي منعًا لقفل الحسابات. عيّن كلمة مرور جديدة للمالك (حقل «كلمة مرور المالك الجديدة») ثم أعد الاستعادة، أو استخدم نسخة تتضمن بيانات تحقق صالحة.'
+        )
+      }
+    }
+    let userRows: TableRow[]
+    let ownerResetUsername: string | null = null
+    let lockedUsers = 0
+    try {
+      const t = transformBackupUsers(usersRaw, newOwnerPassword)
+      userRows = t.rows
+      ownerResetUsername = t.ownerResetUsername
+      lockedUsers = t.lockedCount
+    } catch (e) {
+      return fail(422, e instanceof Error ? e.message : 'بيانات المصادقة في النسخة غير جاهزة — رُفضت الاستعادة دون أي تغيير')
+    }
+
     await db.$transaction(async tx => {
       // حذف بترتيب يحترم المفاتيح الأجنبية (الأبناء أولًا)
       await tx.session.deleteMany({})
@@ -88,8 +127,12 @@ export async function POST(req: NextRequest) {
       if (settingsRows.length > 0) await tx.settings.create({ data: dates(settingsRows[0], ['createdAt', 'updatedAt']) as never })
       restored.settings = Math.min(settingsRows.length, 1)
 
-      const users = pick('users')
-      for (const u of users) await tx.user.create({ data: dates(u, ['createdAt', 'updatedAt', 'lockedUntil', 'lastLoginAt']) as never })
+      const users = userRows
+      for (const u of users) {
+        // دفاع نهائي داخل المعاملة: لا يُدخل مستخدم بهاش أو ملح مفقود/فارغ — أي إخلال يُرجع المعاملة كاملة
+        if (!hasValidAuthMaterial(u)) throw new Error('محاولة إدخال مستخدم ببيانات تحقق غير صالحة — أُلغيت الاستعادة')
+        await tx.user.create({ data: dates(u, ['createdAt', 'updatedAt', 'lockedUntil', 'lastLoginAt']) as never })
+      }
       restored.users = users.length
 
       const categories = pick('categories')
@@ -254,8 +297,16 @@ export async function POST(req: NextRequest) {
       sessionNote = 'الجلسة الحالية انتهت — سجل الدخول من جديد'
     }
 
-    await audit({ userId: r.user.id, username: r.user.username, action: 'RESTORE', entityType: 'Backup', details: { restored } })
+    // ملاحظة المصادقة: ماذا حدث لبيانات الدخول أثناء الاستعادة
+    const authParts: string[] = []
+    if (ownerResetUsername) authParts.push(`أُسندت كلمة مرور جديدة لحساب المالك «${ownerResetUsername}» — استخدمها عند الدخول القادم`)
+    if (lockedUsers > 0) authParts.push(`${lockedUsers} مستخدمًا دُخلوا بلا كلمة مرور فعّالة (مقفلون حتى يعيد المدير ضبط كلمتهم من شاشة المستخدمين)`)
+    if (authParts.length === 0) authParts.push('كلمات مرور المستخدمين المستعادين تعمل كما كانت')
+    const authNote = authParts.join(' — ')
+    if (!meStillThere) sessionNote = 'جلستك الحالية لم تعد موجودة في البيانات المستعادة — سجل الدخول من جديد'
 
-    return ok({ restored, sessionNote, message: 'تمت الاستعادة بنجاح' })
+    await audit({ userId: r.user.id, username: r.user.username, action: 'RESTORE', entityType: 'Backup', details: { restored, ownerReset: ownerResetUsername !== null, lockedUsers, authReady: readiness.authReady } })
+
+    return ok({ restored, sessionNote, authNote, message: 'تمت الاستعادة بنجاح' })
   })
 }

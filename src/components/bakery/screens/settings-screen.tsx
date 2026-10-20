@@ -47,16 +47,25 @@ type SellForm = {
 type NewUserForm = { username: string; displayName: string; role: string; password: string }
 type EditUserForm = { displayName: string; role: string; active: boolean }
 
+type AuthReadinessInfo = {
+  total: number
+  valid: number
+  invalid: number
+  authReady: boolean
+  needsOwnerPassword: boolean
+}
+
 type PreviewResponse = {
   exportedAt: string | null
   schemaVersion: string
   tables: { table: string; rows: number }[]
   totalRows: number
   warnings: string[]
+  auth: AuthReadinessInfo
   message: string
 }
 
-type RestoreResponse = { restored: Record<string, number>; sessionNote: string; message: string }
+type RestoreResponse = { restored: Record<string, number>; sessionNote: string; authNote?: string; message: string }
 
 function sellFormFromSettings(s: Settings): SellForm {
   return {
@@ -122,6 +131,8 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
   const [confirmUnderstood, setConfirmUnderstood] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
   const [backupError, setBackupError] = useState('')
+  const [ownerPassword, setOwnerPassword] = useState('')
+  const [showOwnerPw, setShowOwnerPw] = useState(false)
   const [demoOpen, setDemoOpen] = useState(false)
   const [demoBusy, setDemoBusy] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -332,6 +343,8 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
     setBackupError('')
     setFileData(null)
     setFileName('')
+    setOwnerPassword('')
+    setShowOwnerPw(false)
     if (!file) return
     setFileName(file.name)
     const reader = new FileReader()
@@ -365,14 +378,26 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
 
   async function runRestore() {
     if (!fileData || !preview) return
+    // النسخ المغقّمة (بلا هاشات) تتطلب تعيين كلمة مرور جديدة للمالك قبل الاعتماد
+    const needsOwnerPw = preview.auth?.needsOwnerPassword === true
+    if (needsOwnerPw && ownerPassword.trim().length < 4) {
+      setBackupError('هذه النسخة لا تتضمن بيانات تحقق صالحة — عيّن كلمة مرور جديدة للمالك (4 أحرف/أرقام على الأقل) قبل الاستعادة')
+      return
+    }
     setBackupBusy(true)
     try {
-      const res = await api.post<RestoreResponse>('/api/backup/restore', { data: fileData, confirm: true })
-      toast({ title: 'تمت الاستعادة بنجاح', description: res.sessionNote })
+      const res = await api.post<RestoreResponse>('/api/backup/restore', {
+        data: fileData,
+        confirm: true,
+        ...(needsOwnerPw ? { newOwnerPassword: ownerPassword } : {}),
+      })
+      toast({ title: 'تمت الاستعادة بنجاح', description: [res.authNote, res.sessionNote].filter(Boolean).join(' — ') })
       setPreview(null)
       setFileData(null)
       setFileName('')
       setConfirmUnderstood(false)
+      setOwnerPassword('')
+      setShowOwnerPw(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
       if (onSettingsChanged) await onSettingsChanged()
       void loadUsers()
@@ -725,6 +750,38 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
                       ⚠ {preview.message}
                     </p>
 
+                    {preview.auth?.needsOwnerPassword ? (
+                      <div className="rounded-lg border border-copper-500/50 bg-copper-100/40 p-3">
+                        <Label htmlFor="restore-owner-password" className="text-sm font-bold">
+                          كلمة مرور المالك الجديدة <span className="font-normal text-muted-foreground">(مطلوبة — النسخة بلا بيانات تحقق صالحة)</span>
+                        </Label>
+                        <div className="relative mt-2">
+                          <Input
+                            id="restore-owner-password"
+                            type="password"
+                            inputMode="numeric"
+                            value={ownerPassword}
+                            onChange={e => setOwnerPassword(e.target.value)}
+                            className="h-10 pe-10 tracking-widest"
+                            placeholder="4 أحرف/أرقام على الأقل"
+                            autoComplete="new-password"
+                            aria-label="كلمة مرور المالك الجديدة للاستعادة"
+                          />
+                          <button
+                            type="button"
+                            className="absolute inset-y-0 end-2 my-auto h-7 w-7 text-muted-foreground hover:text-foreground"
+                            onClick={() => setShowOwnerPw(v => !v)}
+                            aria-label={showOwnerPw ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                          >
+                            {showOwnerPw ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+                          </button>
+                        </div>
+                        <p className="mt-1.5 text-xs text-muted-foreground">
+                          سيُعيَّن هذا الحساب للمالك عبر آلية المصادقة الحالية (تجزئة + ملح مستقل)، وبقية المستخدمين بلا بيانات تحقق سيُدخلون مقفلين حتى يضبط المدير كلماتهم.
+                        </p>
+                      </div>
+                    ) : null}
+
                     <div className="flex items-center gap-2">
                       <Checkbox
                         id="restore-confirm"
@@ -742,9 +799,9 @@ export function SettingsScreen({ onSettingsChanged }: { onSettingsChanged?: () =
                         variant="destructive"
                         className="h-10"
                         onClick={() => void runRestore()}
-                        disabled={!confirmUnderstood || backupBusy}
+                        disabled={!confirmUnderstood || backupBusy || (preview.auth?.needsOwnerPassword === true && ownerPassword.trim().length < 4)}
                       >
-                        {backupBusy ? 'جارٍ الاستعادة…' : 'استعادة الآن'}
+                        {backupBusy ? 'جارٍ الاستعادة…' : preview.auth?.needsOwnerPassword ? 'استعادة مع تعيين كلمة مرور المالك' : 'استعادة الآن'}
                       </Button>
                     </div>
                   </div>
