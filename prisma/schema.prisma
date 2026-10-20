@@ -359,6 +359,7 @@ model ProductionBatch {
   materialsCostMinor Int
   unitCostMinor      Int
   status             String    @default("COMPLETED") // COMPLETED | CANCELLED
+  clientRef          String?   @unique // منع تسجيل الدفعة نفسها مرتين (نقر مزدوج)
   notes              String?
   userId             String
   voidReason         String?

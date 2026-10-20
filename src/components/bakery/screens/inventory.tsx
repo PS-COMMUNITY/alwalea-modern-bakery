@@ -109,6 +109,8 @@ export function InventoryScreen() {
 
   // ===== الأرصدة =====
   const [balances, setBalances] = useState<InventoryItem[] | null>(null)
+  // عرض تدريجي لكتالوج كبير — زر «عرض المزيد» يوسّع النافذة (بدون تغيير البيانات أو قواعدها)
+  const [visibleCount, setVisibleCount] = useState(200)
   const [balLoading, setBalLoading] = useState(true)
   const [balError, setBalError] = useState('')
   const [lowOnly, setLowOnly] = useState(false)
@@ -424,7 +426,7 @@ export function InventoryScreen() {
                   </tr>
                 </thead>
                 <tbody>
-                  {balances.map(it => {
+                  {balances.slice(0, visibleCount).map(it => {
                     const isLow = it.trackStock && (it.qtyMilli <= it.minStockMilli || it.qtyMilli <= 0)
                     return (
                       <tr key={it.productId} className="border-t transition-colors hover:bg-cream-100">
@@ -457,6 +459,17 @@ export function InventoryScreen() {
                   </tfoot>
                 ) : null}
               </table>
+              {balances.length > visibleCount ? (
+                <div className="border-t p-3 text-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setVisibleCount(c => c + 200)}
+                  >
+                    عرض المزيد ({(balances.length - visibleCount).toLocaleString('ar')} متبقي من {balances.length.toLocaleString('ar')})
+                  </Button>
+                </div>
+              ) : null}
             </TableShell>
           ) : null}
         </TabsContent>

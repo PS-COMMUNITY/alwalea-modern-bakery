@@ -66,6 +66,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         },
       })
 
+      // رد النقد المدفوع على الفاتورة الملغاة إلى الصندوق (توحيد مع إلغاء المبيعات):
+      // على وردية الدفع إن كانت مفتوحة، وإلا أحدث وردية مفتوحة، وإلا يُوثق الرد في الأرشيف فقط.
+      const cashPayments = await tx.purchasePayment.findMany({ where: { purchaseId: p.id, method: 'CASH' } })
+      const cashTotal = cashPayments.reduce((a, p) => a + p.amountMinor, 0)
+      if (cashTotal > 0) {
+        const payShiftIds = [...new Set(cashPayments.map(x => x.shiftId).filter((x): x is string => !!x))]
+        let targetShiftId: string | undefined
+        for (const sid of payShiftIds) {
+          const stillOpen = await tx.shift.findFirst({ where: { id: sid, status: 'OPEN' } })
+          if (stillOpen) { targetShiftId = sid; break }
+        }
+        if (!targetShiftId) {
+          const latestOpen = await tx.shift.findFirst({ where: { status: 'OPEN' }, orderBy: { openedAt: 'desc' } })
+          targetShiftId = latestOpen?.id
+        }
+        if (targetShiftId) {
+          await tx.cashMovement.create({
+            data: {
+              shiftId: targetShiftId,
+              type: 'ADJUSTMENT',
+              amountMinor: cashTotal,
+              refType: 'PurchaseCancel',
+              refId: p.id,
+              note: `رد نقدية إلغاء فاتورة شراء ${p.invoiceNo}`,
+              userId: user.id,
+            },
+          })
+        }
+      }
+
       return p
     })
 

@@ -103,7 +103,7 @@ export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: (
       <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden />
       <span className="text-sm font-medium">{message}</span>
       {onRetry ? (
-        <button onClick={onRetry} className="ms-auto text-sm font-semibold underline underline-offset-4">
+        <button onClick={onRetry} className="ms-auto inline-flex min-h-11 items-center rounded-md px-3 text-sm font-semibold underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive">
           إعادة المحاولة
         </button>
       ) : null}

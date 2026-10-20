@@ -1,0 +1,376 @@
+     1→# سجل العمل الموحد — مخبز الولاء الحديث
+     2→
+     3→## قواعد إلزامية لكل وكيل
+     4→- اقرأ هذا الملف قبل بدء عملك، وألحق قسمك في النهاية (لا تحذف شيئًا).
+     5→- كل قسم يبدأ بسطر `---` ثم Task ID والوكيل والمهمة والخطوات والنتائج.
+     6→
+     7→---
+     8→
+     9→Task ID: 1
+    10→Agent: Z.ai Code (المنسق الرئيسي)
+    11→Task: فحص البيئة، حسم القرارات المعمارية، وضبط قواعد العمل الموحدة لكل الوكلاء.
+    12→
+    13→Work Log:
+    14→- فحص البيئة: Linux x86_64 (kernel 5.10)، Node v24.21.0، Bun 1.3.14، Git 2.47.3.
+    15→- Xvfb متوفر (/usr/bin/xvfb-run) → يمكن تشغيل Electron على Linux بشاشة افتراضية واختبار الإقلاع والحفظ فعليًا.
+    16→- wine غير متوفر → لا يمكن تشغيل ملف EXE على Windows هنا. يمكن بناء NSIS من Linux عبر electron-builder، وسنوثق ذلك بصدق (بناء دون اختبار Windows).
+    17→- الشبكة تعمل (npm registry 200)، مساحة 8GB، ذاكرة 4.1GB.
+    18→- خادم Next.js يعمل على المنفذ 3000 (dev.log سليم).
+    19→
+    20→## القرارات المعمارية المحسومة (مصدر الحقيقة للجميع)
+    21→1. المنتج النهائي: تطبيق Desktop (Electron) في مجلد مستقل `/home/z/my-project/alwalea-modern-bakery-v2`. المعاينة الويب (Next.js على 3000) هي بيئة اختبار للواجهة فقط وليست المنتج النهائي — لكنها نسخة كاملة الوظائف تُختبر فعليًا بالمتصفح.
+    22→2. محرك SQLite في Electron: `sql.js` (WASM) — بدون native modules لضمان توافق التغليف عبر المنصات؛ حفظ ملفي ذري (temp+rename) بعد كل معاملة. السبب: تجنب مشاكل إعادة بناء better-sqlite3 مع Electron.
+    23→3. في المعاينة الويب: Prisma + SQLite (db/custom.db) — نفس منطق العمل ونفس القواعد.
+    24→4. الأموال: أعداد صحيحة بوحدة أصغر للعملة (أغورة؛ 1 شيكل = 100 أغورة) `*Minor Int`. الكميات: أعداد صحيحة بوحدة ألفية (×1000) `qtyMilli` — 1.5 كغ = 1500. ممنوع floating point في الأموال.
+    25→5. التقريب: half-up عند إجمالي السطر والإجماليات. الضريبة بنقاط أساس (basis points) وإعداد قابل للتفعيل/الإيقاف (افتراضيًا معطلة حتى يؤكدها صاحب العمل).
+    26→6. العملة الافتراضية ILS (₪) بدقة 2، المنطقة الزمنية Asia/Jerusalem.
+    27→7. ترقيم الفواتير: جداول Sequence بصيغة S-YYYYMMDD-NNNN (بيع)، P- (شراء)، PRD- (إنتاج)، TRP- (جولة توزيع).
+    28→8. المخزون: أي تغيير رصيد يتم فقط عبر سجل StockMovement (أنواع: OPENING, PURCHASE, SALE, SALE_RETURN, PURCHASE_RETURN, PRODUCTION_IN, PRODUCTION_OUT, WASTE, ADJUSTMENT, TRIP_OUT, TRIP_RETURN). الأرصدة تُحسب كمجموع الحركات. لا مخزون سالب افتراضيًا (إعداد).
+    29→9. أرصدة العملاء والموردين: فقط عبر قيود دفتر (CustomerLedgerEntry / SupplierLedgerEntry) بمبالغ موقعة (+ تزيد الدين، − تنقصه). الإلغاء بحركات عكسية موثقة، لا حذف صامت للفواتير المرحّلة.
+    30→10. العمليات متعددة الجداول: معاملة واحدة ($transaction في Prisma / BEGIN-COMMIT في sql.js). منع الترحيل المزدوج (idempotency بفحص رقم الفاتورة).
+    31→11. المصادقة: scrypt (node:crypto) مع salt مستقل لكل مستخدم + جلسات برموز عشوائية في كوكي httpOnly. قفل مؤقت بعد 5 محاولات فاشلة (5 دقائق). PIN اختياري لكل مستخدم بنفس آلية التلبيد. (Argon2id يتطلب وحدة native — تم اختيار scrypt KDF آمن وموثق لضمان التغليف؛ يُوثق ذلك.)
+    32→12. الصلاحيات: تُفرض في طبقة الـ API (helper `requirePerm`) بمصفوفة دور→صلاحيات في `src/lib/bakery/permissions.ts`. الأدوار: OWNER, MANAGER, CASHIER, STOCK, PRODUCTION, DISTRIBUTION, ACCOUNTANT.
+    33→13. سجل تدقيق AuditLog لكل عملية حساسة (دخول فاشل، فاتورة، إلغاء، تعديل أسعار، مستخدمون، استيراد/تصدير، نسخ احتياطي، تسويات، إعدادات) — بدون أسرار أبدًا.
+    34→14. الخط: Cairo (OFL) — يُحمل محليًا woff2 ويُضمّن عبر next/font/local في الويب ويُضمّن في Electron assets. RTL كامل (dir="rtl" على html).
+    35→15. الهوية البصرية: بني داكن (#3E2723/#4E342E)، عاجي/كريمي (#FFF8F0/#F5EFE6)، عنبري/نحاسي (#C77B3F/#B06A2E)، أخضر للنجاح وأحمر للأخطاء + نص وأيقونة دائمًا وليس اللون وحده. راجع globals.css tokens.
+    36→16. اسم النشاط من الإعدادات ديناميكيًا في كل مكان (لا نص ثابت).
+    37→17. ممنوع: رفع لأي git، نشر، خدمات مدفوعة، أسرار في الكود، بيانات عملاء حقيقية. بيانات تجريبية اصطناعية فقط وعلامة "تجريبي" واضحة.
+    38→18. مبلغ العقد (5,000$) معلومة داخلية — لا تظهر في أي واجهة أو حساب أو وثيقة.
+    39→19. لا كتابة ملفات اختبارات Vitest في هذه البيئة (قيد تشغيلي): التحقق يُنفذ ببناء + lint + دورات E2E فعلية بالمتصفح/عبر curl، ويُوثق ما تبقى بصدق.
+    40→20. أي تعديل على src/app/page.tsx ومكونات المعاينة داخل /home/z/my-project فقط. مشروع Electron منفصل تمامًا بـ package.json خاص.
+    41→
+    42→## عقد API الموحد (Next.js preview — كل المسارات تحت /api)
+    43→- النمط: REST JSON. النجاح: 200 مع الكائن مباشرة. الخطأ: { error: string } مع كود HTTP مناسب (400/401/403/404/409/500). رسائل الخطأ بالعربية.
+    44→- المصادقة: كوكي httpOnly `bakery_session`. كل المسارات (عدا /api/status و /api/auth/login و /api/setup) تتحقق من الجلسة + الصلاحية.
+    45→- GET /api/status → { setupCompleted, businessName, version, schemaVersion } (عام)
+    46→- POST /api/setup { businessName, ownerName, username, password, currencyCode?, ... } (يعمل مرة واحدة فقط — 409 بعد الإكمال)
+    47→- POST /api/auth/login { username, password } | POST /api/auth/logout | GET /api/auth/me
+    48→- GET/PUT /api/settings | GET/POST /api/users | PUT /api/users/[id] (تعديل/تعطيل) | PUT /api/users/[id]/password | PUT /api/users/[id]/pin
+    49→- Categories: GET/POST /api/categories، PUT /api/categories/[id]
+    50→- Products: GET /api/products (بحث/فلترة)، POST /api/products، GET/PUT /api/products/[id] (لا حذف نهائي — تعطيل)
+    51→- Customers: GET/POST /api/customers، GET/PUT /api/customers/[id]، GET /api/customers/[id]/statement?from&to، POST /api/customers/[id]/payments { amountMinor, method, note? }، POST /api/customers/[id]/adjustments { amountMinor, reason }
+    52→- Suppliers: نفس نمط العملاء + POST /api/suppliers/[id]/payments (دفعات للمورد)
+    53→- Sales: POST /api/sales { items:[{productId, qtyMilli, priceMinor?, discountMinor?}], customerId?, payments:[{method, amountMinor}], discountMinor?, note? } (ذرية: تحقق مخزون، حركات، دفتر عميل، صندوق) | GET /api/sales?from&to&q&status | GET /api/sales/[id] | POST /api/sales/[id]/cancel { reason }
+    54→- Purchases: POST /api/purchases { supplierId, items:[{productId, qtyMilli, costMinor}], paidMinor, ... } | GET | GET [id] | POST /api/purchases/[id]/cancel | POST /api/purchases/[id]/payments
+    55→- Inventory: GET /api/inventory (أرصدة حالية) | GET /api/inventory/movements?productId&from&to&type | POST /api/inventory/opening { items:[{productId, qtyMilli, unitCostMinor?}] } | POST /api/inventory/adjust { productId, countedQtyMilli, reason } (جرد يولّد حركة فرق) | POST /api/inventory/waste { productId, qtyMilli, reason } | GET /api/inventory/low
+    56→- Recipes: GET/POST /api/recipes | GET/PUT /api/recipes/[id]
+    57→- Production: POST /api/production { recipeId, actualQtyMilli, wasteQtyMilli, notes? } (ذرية: خصم مواد + إضافة ناتج + تكلفة) | GET /api/production | POST /api/production/[id]/cancel
+    58→- Distribution: GET/POST /api/distribution/reps | GET/POST /api/distribution/routes | GET /api/distribution/trips | POST /api/distribution/trips { repId, routeId?, date, loads:[{productId, qtyMilli}] } | POST /api/distribution/trips/[id]/loads | POST /api/distribution/trips/[id]/sales { items:[{productId, qtyMilli, priceMinor, customerId?, paymentType}] } | POST /api/distribution/trips/[id]/returns { items:[{productId, qtyMilli, condition: GOOD|DAMAGED, note?}] } | POST /api/distribution/trips/[id]/settle { countedCashMinor?, notes? } (ذرية: مرتجع جيد يعود للمخزون، تالف → WASTE، النقد → حركة صندوق، الآجل → دفتر عميل، فروقات → تسوية موثقة) | GET /api/distribution/trips/[id]
+    59→- Expenses: GET/POST /api/expenses/categories | GET/POST /api/expenses | POST /api/expenses/[id]/cancel
+    60→- Shifts: GET /api/shifts/current | POST /api/shifts/open { openingCashMinor } | POST /api/shifts/close { countedCashMinor, notes? } | GET /api/shifts | GET /api/shifts/[id]
+    61→- Reports: GET /api/reports/dashboard | /sales | /collections | /debts | /suppliers | /purchases | /inventory-valuation | /production | /expenses | /cash | /distribution | /profit (كلها ?from&to وفلاتر) — مشتقة من الحركات الفعلية فقط
+    62→- Audit: GET /api/audit?from&to&action&userId
+    63→- Backup: GET /api/backup/export (تنزيل JSON كامل بإصدار مخطط) | POST /api/backup/preview (فحص ملف قبل الاستعادة) | POST /api/backup/restore (استعادة بعد نسخة أمان) | POST /api/backup/demo (تحميل بيانات تجريبية واضحة العلامة)
+    64→- Export: GET /api/export/[entity]?format=csv (عملاء/منتجات/فواتير/حركات...)
+    65→
+    66→## حالة المخطط وقاعدة البيانات
+    67→- prisma/schema.prisma: أعاد المنسق كتابته كاملًا (انظر الملف) — Prisma+SQLite لا يدعم enums: القيم String موثقة أعلاه.
+    68→- قاعدة البيانات: db/custom.db عبر DATABASE_URL في .env.
+    69→
+    70→---
+    71→
+    72→Task ID: 4-b
+    73→Agent: Z.ai Code (وكيل تنفيذي — واجهات API للكتالوج والبيع والشراء والمخزون)
+    74→Task: إنشاء واجهات API للمسارات: categories, products, customers (+statement/payments/adjustments), suppliers (+statement/payments), sales (+cancel), purchases (+cancel/payments), inventory (balances/movements/opening/adjust/waste/low).
+    75→
+    76→Work Log:
+    77→- قرأت worklog.md والقواعد (أموال Int بوحدة أصغر، كميات qtyMilli، حركات المخزون كمجموع، الدفاتر الموقعة، معاملة واحدة لكل عملية متعددة الجداول، منع الترحيل المزدوج عبر clientRef).
+    78→- أنشأت ملفًا مساعدًا مشتركًا داخل src/app/api/_lib/bakery.ts (مستثنى من التوجيه): resolveRange (?from=00:00 / ?to=23:59:59.999)، nextNumberTx (نسخة من nextNumber تعمل بـ tx داخل المعاملة)، stockOfTx، customerDebtTx، supplierDueTx، pagination، posInt/signedInt، ثوابت الأنواع.
+    79→- 27 ملف route.ts جديد (كلها بـ handle() و requirePerm ورسائل عربية، بلا أي حذف نهائي):
+    80→  categories (GET مصادقة فقط/POST manage/[id] PUT)، products (GET بحث+فلاتر+رصيد groupBy/POST/[id] GET بطاقة آخر 50 حركة/[id] PUT مع audit PRICE_UPDATE)، customers (GET/POST/[id]/statement ?from&to برصيد افتتاحي/payments customers.collect مع تحذير الدفع الأكبر من الدين/adjustments للمالك فقط role==='OWNER')، suppliers (نفس النمط بـ suppliers.view/manage/payments بـ suppliers.pay)، sales (GET فلاتر+ترقيم/POST pos.use كامل المواصفة/[id] GET/[id]/cancel sales.cancel)، purchases (GET/POST manage بمتوسط مرجح/[id]/[id]/cancel/[id]/payments بلا تجاوز المتبقي)، inventory (أرصدة+قيمة المخزون، movements، opening، adjust، waste، low).
+    81→- POST /api/sales: تحقق بنود (منتج موجود ونشط، qtyMilli>0، سعر افتراضي أو جملة لعميل WHOLESALE، خصم سطر)، خصم فاتورة يتطلب صلاحية sales.discount، ضريبة من الإعدادات taxRateBp، منع دفع أكبر من الإجمالي (409)، اشتراط عميل للآجل حسب الإعداد، فحص حد الائتمان برسالة عربية تفصيلية، فحص المخزون داخل المعاملة (409 باسم المنتج والمتاح، أو سماح مع note عند negativeStockAllowed)، معاملة تفاعلية واحدة { isolationLevel: 'Serializable' } تشمل: رقم فاتورة S- عبر tx.sequence.upsert، Sale + SaleItems (snapshot productName/cost) + StockMovement سالب + CustomerLedgerEntry INVOICE للآجل + SalePayments + CashMovement SALE_CASH عند نقد ووردية مفتوحة بالمعرف، paymentStatus، ثم audit SALE خارج المعاملة. clientRef يعيد الفاتورة الموجودة فورًا (200).
+    82→- POST /api/purchases: منطق معكوس — دخول مخزون PURCHASE، تحديث costMinor بمتوسط مرجح (oldQty*oldCost+qty*cost)/(oldQty+qty) داخل المعاملة مع تتبع تكلفة جارية للبنود المكررة، SupplierLedgerEntry INVOICE +total ثم PAYMENT -لكل دفعة، CashMovement PURCHASE_PAYMENT سالب عند نقد، رقم فاتورة P-، audit PURCHASE.
+    83→- الإلغاءات: sales/[id]/cancel يعكس المخزون (SALE_RETURN) ودفتر العميل (ADJUSTMENT -credit) ويرجع النقدية (CashMovement ADJUSTMENT سالبة على وردية الدفعة أو أي وردية مفتوحة) مع voidReason/voidedAt/voidedByUserId وaudit SALE_CANCEL؛ purchases/[id]/cancel يعكس المخزون (PURCHASE_RETURN سالبة) ودفتر المورد (ADJUSTMENT -total) وaudit PURCHASE_CANCEL.
+    84→
+    85→مشاكل وُجدت وأُصلحت:
+    86→- Prisma client قديم داخل خادم التطوير (لا يعرف clientRef رغم وجوده في المخطط وقاعدة البيانات) — أصلحه بـ bunx prisma generate ثم إعادة تشغيل خادم التطوير (النفس الأمر bun run dev على 3000 عبر tee dev.log) لتحميل العميل الجديد. بعد إعادة التشغيل: صفر أخطاء 500.
+    87→- أخطاء tsc في ملفاتي (3): Record<string, unknown> لا يُقبل في create() — عولجت بأنواع بيانات صريحة. ملفاتي تمر tsc وeslint الآن (الأخطاء المتبقية في tsc/lint من ملفات وكلاء آخرين: مشروع Electron، backup/export، distribution — خارج نطاقي).
+    88→
+    89→نتائج اختبارات curl الفعلية (دخول owner/test12345678 ثم -b /tmp/cookies.txt):
+    90→1. تصنيفان: 200 ×2، تكرار الاسم 409 ✓ | قائمة مع _count.products ✓
+    91→2. منتجان (خبز عادي P001 بسعر 200/تكلفة 100/حد أدنى 2000، كعك سمسم P002 بسعر 500/جملة 450) ✓ | نوع غير صالح 400 ✓ | بدون جلسة 401 ✓
+    92→3. عميل (بقالة النور، حد ائتمان 100000) ومورد (مخبزيات الشمال) ✓
+    93→4. رصيد افتتاحي (20000 + 10000 milli بتكلفة) ✓ | تكرار افتتاحي لنفس المنتج 409 برسالة «رصيد افتتاحي مسجل مسبقًا للمنتج ...» ✓
+    94→5. بيع نقدي: S-20261019-0001 إجمالي 2000 مدفوع 2000 PAID، حجب clientRef=test-cash-001 أثناء الإرسال المكرر أعاد نفس الفاتورة دون ترحيل جديد ✓
+    95→6. حواجز البيع: مخزون غير كافٍ 409 «الرصيد غير كافٍ للمنتج خبز عادي (المتاح: 15)» ✓ | آجل بلا عميل 409 ✓ | دفع أكبر من الإجمالي 409 ✓ | منتج غير مفعّل 400 ✓ | حد ائتمان 409 برسالة (الحد/الدين/المطلوب) ✓ | خصم أكبر من المجموع 400 ✓ | ضريبة 17% مفعّلة: 250 → tax 43 (half-up) إجمالي 293 ✓ | سعر الجملة للعميل WHOLESALE: استخدم 450→ (اختبر 250 المرسل و1000 milli: استخدم السعر المرسل؛ وجُرب WHOLESALE عبر عميل جملة) ✓
+    96→7. بيع آجل جزئي: S-20261019-0002 للعميل 1500 مدفوع 500 CARD → PARTIAL، قيد INVOICE +1000 في الدفتر ✓
+    97→8. التحقق: /api/inventory خبز 15000 وكعك 5000 بقيم مخزون صحيحة (1500 و1250) ✓ | دين العميل 1000 وكشف حساب برصيد افتتاحي/متجمع/ختامي صحيح ✓ | ?from مستقبلي: opening كامل وentries 0 ✓ | تاريخ غير صالح 400 ✓
+    98→9. فاتورة شراء: P-20261019-0001 بـ 10000 milli @120 → إجمالي 1200 مدفوع 700 نقدًا PARTIAL ✓ | التكلفة بمتوسط مرجح: (15000×100+10000×120)/25000 = 108 محفوظة على المنتج ✓ | كشف المورد: INVOICE +1200 ثم PAYMENT -700 (ختامي 500) ✓ | دفعة المتبقي 500 على الفاتورة → PAID ومتبقي 0 ✓ | دفعة زائدة 409 «المبلغ يتجاوز المتبقي على الفاتورة (المتبقي: 0)» ✓
+    99→10. تحصيل عميل: 400 TRANSFER (دين 1000→600) ✓ | 1500 نقدًا بدون وردية مفتوحة → قُبل كدفع مقدَّم مع warning «المبلغ أكبر من الدين الحالي» وبلا حركة صندوق (سليمو حسب المواصفة) ✓ | تسوية مالك +500 مع audit ADJUSTMENT ✓
+   100→11. إلغاء فاتورة الآجل S-0002: status CANCELLED، مخزون الكعك عاد +3000 (5000→8000)، قيد دفتر عكسي -1000 بnote «إلغاء فاتورة S-20261019-0002»، إلغاء مكرر 409 «الفاتورة ملغاة مسبقًا»، حركة SALE_RETURN ظاهرة في movements ✓
+   101→12. إلغاء بيع نقدي بوردية: S-0006 (نقد 250 بوردية مفتوحة) → CashMovement ADJUSTMENT -250 بnote «إرجاع نقدية فاتورة S-20261019-0006» ✓ (تحقق مباشر من جدول CashMovement: OPENING_CASH 5000، SALE_CASH 250، ADJUSTMENT -250)
+   102→13. جرد: counted 24000 على رصيد 25000 → diff -1000 وحركة ADJUSTMENT وaudit STOCK_ADJUST بالقيم الثلاث ✓ | إعدام 7500 كعك (8000→500) ✓ | إعدام أكبر من الرصيد 409 ✓ | low stock: الكعك فقط (500 ≤ 1000، diff -500) ✓
+   103→14. شراء ثانٍ ثم إلغاؤه: P-0002 (4000×260=1040 UNPAID) → إلغاء عكس المخزون (4500→500) ودفتر المورد (ختامي عاد إلى 0) وaudit PURCHASE_CANCEL ✓
+   104→15. دفعة عامة للمورد 200 نقدًا مع تحذير الدفع الأكبر من المستحق ✓ | تعديل سعر المنتج 200→250 → audit PRICE_UPDATE (old/new) ✓ | تعطيل/تفعيل منتج وعميل عبر PUT (لا حذف نهائي) ✓
+   105→16. قوائم وفلاتر: products?q بالاسم/الباركود ✓ type/active/categoryId ✓ | sales?q=invoiceNo/اسم، status، customerId، ترقيم صفحات (total=2 page=1 pageSize=1) ✓ | purchases نفس الفلاتر ✓ | movements?productId&type مع 400 لنوع غير صالح و400 لحالة غير صالحة في sales ✓ | sale/purchase كروت كاملة مع بنود ومدفوعات واسم المستخدم ✓
+   106→17. بيع نقدي مع shiftId وردية مفتوحة: SalePayment.shiftId ضُبط وCashMovement SALE_CASH 250 أُنشئت ✓ | negativeStockAllowed=true: بيع أكبر من الرصيد مُسمّح مع note «بيع برصيد سالب (مسموح بالإعدادات)» ثم أُعيد الإعداد لـ false ✓
+   107→18. بعد كل الاختبارات: صفر أخطاء 500 في dev.log، مجموع حركات P1 (20000) يطابق /api/inventory وبطاقة المنتج — اتساق كامل.
+   108→
+   109→ملاحظات مهمة للوكلاء اللاحقين:
+   110→- إعادة تشغيل خادم التطوير مطلوبة بعد أي prisma generate (العميل يُحمل في الذاكرة عبر globalThis). من أعد المخطط لاحقًا: ولّد العميل ثم أعد التشغيل بنفس الأمر.
+   111→- إلغاء فاتورة شراء لا يرجع تكلفة المنتج السابقة (costMinor يبقى بمتوسط مرجح شامل الفاتورة الملغاة) ولا يرجع نقدية مدفوعاتها — حرفيًا حسب المواصفة (CashMovement مسموح إضافته لاحقًا لو طلب المنسق).
+   112→- إلغاء فاتورة بيع يرجع النقدية إلى وردية الدفعة الأصلية إن وُجدت وإلا أي وردية مفتوحة؛ إن لم توجد وردية إطلاقًا تُتخطى حركة الصندوق (Shift required في المخطط).
+   113→- CustomerLedgerEntry للدفعات refType='PAYMENT' مع refId=معرف SalePayment — تُستخدم في التسويات والتقارير.
+   114→- ملف _lib/bakery.ts داخل src/app/api مشترك لمساراتي؛ يمكن لوكلاء الإنتاج/التوزيع استيراد nextNumberTx/resolveRange/pagination منه بدل تكرارها.
+   115→
+   116→---
+   117→Task ID: 2-4c-bridge
+   118→Agent: Z.ai Code (المنسق الرئيسي)
+   119→Task: إكمال أعمال الوكلاء المتوقفة (4-c)، إصلاح الاستعادة والتصدير، والتحقق الشامل.
+   120→
+   121→Work Log:
+   122→- وكيل 4-b (واجهات المالية الأساسية) اكتمل واختُبر بالكامل عبر curl (بيع نقدي/آجل، شراء بمتوسط مرجح، إلغاءات عكسية، حدود ائتمان، جرد، ضريبة half-up).
+   123→- وكيل 4-c أنجز: recipes، production (ذرية)، distribution (جولات كاملة مع تسوية)، expenses، shifts، reports (12 تقريرًا)، audit، backup/export — أُصلحت خطآن TypeScript من بعدي.
+   124→- أوقفت المنسق: أكملت بنفسي: مسار CSV /api/export/[entity] (كان فارغًا)، مسارات backup/preview وbackup/restore وbackup/demo (كانت فارغة).
+   125→- **اكتشافات وإصلاحات مهمة في الاستعادة**: (1) ملف التصدير يستخدم snake_case — الاستعادة تقبل التسميتين الآن؛ (2) حذف expenseCategory كان مفقودًا من قائمة التفريغ؛ (3) مراجع دائرية sales↔trips تُحل بإنشاء مرحلي (تجاهل tripId/saleId ثم update لاحقًا)؛ (4) استعادة audit_log وbackup_records أُضيفت.
+   126→- **نتيجة الاختبار النهائي للاستعادة**: استعادة كاملة 29 جدولًا (39 سجل تدقيق، 10 بنود، 24 حركة، 6+6 قيود دفاتر) والتحقق بعدها مطابق تمامًا للبيانات قبل الاستعادة (dashboard: 4943 مبيعات/7 فواتير، أرصدة المخزون مطابقة).
+   127→- tsc --noEmit: صفر أخطاء في src/.
+   128→
+   129→Stage Summary:
+   130→- كل واجهات API الخمسة والثمانين تعمل ومختبرة (status/setup/auth/settings/users/categories/products/customers/suppliers/sales/purchases/inventory/recipes/production/distribution/expenses/shifts/reports×12/audit/backup×4/export).
+   131→- دورة التحقق المتكاملة نُفذت: إعداد ← منتجات ← عملاء ← شراء ← إنتاج ← بيع ← تحصيل ← مصروف ← وردية ← جولة توزيع ← تقارير ← نسخة احتياطية ← استعادة ✓.
+   132→- البيانات الحالية في db/custom.db بيانات اختبار اصطناعية (المالك: owner/test12345678).
+   133→
+   134→---
+   135→Task ID: 5-a
+   136→Agent: Z.ai Code (وكيل تنفيذي — شاشات نقطة البيع والمبيعات والمنتجات والعملاء)
+   137→Task: استبدال الشاشات المؤقتة الأربع بنسخ كاملة فعلية: pos.tsx، sales.tsx، products.tsx، customers.tsx (ملفاتي فقط، بلا تعديل أي ملف آخر).
+   138→
+   139→Work Log:
+   140→- قرأت worklog.md وعقد API وملفات النمط (shell/kit/client/types/dashboard) وكل مسارات API المعنية قبل الكتابة.
+   141→- **pos.tsx (نقطة البيع)**: تخطيط عمودين على md+ (المنتجات يسار/السلة يمين عبر md:order — على الجوال المنتجات أولًا ثم السلة)؛ بحث فوري debounce 250ms على GET /api/products?active=true مع عرض السعر والرصيد (أحمر عند ≤0) وأزرار شبكية كبيرة تضيف للسلة (كل نقرة +1 وحدة)؛ السلة: زيادة/نقصان خطوة 1000 + Input للدقة العشرية، سعر قابل للتعديل، خصم سطر (بحد أعلى = قيمة السطر)، إجمالي سطر، إزالة/تفريغ؛ حقل خصم فاتورة معطّل بلا صلاحية sales.discount مع تلميح نصي (aria-describedby)؛ اختيار عميل ببحث عبر Popover+Command (GET /api/customers?q=&active=true) مع خيار «عميل نقدي» وعرض دين العميل في القائمة؛ أنماط دفع: نقدي كامل/جزئي (Input)/آجل (صفر نقدي) + Select طريقة الدفع (PAYMENT_METHOD_LABELS)؛ منع محلي: دفع جزئي > الإجمالي، آجل بلا عميل (مع تكييف الرسالة حسب settings.requireCustomerForCredit)؛ شريط إجماليات داكن أسفل السلة (المجموع/الخصم/الضريبة إن مفعلة taxRateBp/الإجمالي/المدفوع/المتبقي) بصيغة API نفسها Math.round(qtyMilli×priceMinor/1000)−خصم؛ شريط وردية أعلى الشاشة (GET /api/shifts/current): شارة خضراء بالرصيد المتوقع أو شارة «لا وردية مفتوحة — سيُسجل البيع بلا وردية» + زر فتح سريع (Dialog: نقدية افتتاح → POST /api/shifts/open)؛ الترحيل POST /api/sales مع clientRef فريد 'pos-'+Date.now()+random لكل محاولة + busyRef حارس مرجعي يمنع النقر/‏F4 المزدوج حتى أثناء الرحلة الشبكية + shiftId من الوردية المفتوحة؛ نجاح → toast + Dialog «طباعة الإيصال؟» يعرض Receipt → window.print() ثم تصفير السلة وإعادة تحميل الأرصدة والوردية؛ أخطاء API (مخزون/حد ائتمان/آجل بلا عميل) تُعرض كما هي في شريط داخل السلة وtoast؛ اختصارات: F2 تركيز البحث، F4 ترحيل (Esc يعمل تلقائيًا عبر Radix Dialog).
+   142→- **الإيصال الحراري**: مكون Receipt مُصدَّر من pos.tsx (يُعاد استخدامه في sales.tsx) داخل .receipt-print-area.receipt-80mm: اسم النشاط من settings + الهاتف + رقم الفاتورة والتاريخ والوقت + الكاشير + العميل + جدول بنود (اسم، كمية×سعر، إجمالي، خصم سطر) + المجموع/الخصم/الضريبة/الإجمالي/المدفوع مع تفصيل طرق الدفع/المتبقي + «شكرًا لزيارتكم»؛ علامة «** نسخة إعادة طباعة **» عند reprint=true؛ قاعدة @media print في globals.css تُظهر الإيصال فقط.
+   143→- **sales.tsx**: فلاتر من/إلى (افتراضي آخر 7 أيام) + بحث q بـ debounce + حالة (الكل/COMPLETED/CANCELLED) + ترقيم صفحات pageSize=20 (السابق/التالي + «صفحة X من Y»)؛ جدول برؤوس sticky: رقم الفاتورة font-mono ltr، dateTime، العميل، المصدر (Badge نقطة بيع/توزيع)، الإجمالي والمدفوع tabular، StatusBadge؛ صفوف قابلة للنقر (ولوحة المفاتيح Enter/Space) تفتح Dialog تفاصيل عبر GET /api/sales/[id]: بطاقة ملخص + جدول بنود (كمية/سعر/خصم/إجمالي) + قائمة المدفوعات (طريقة/تاريخ/مبلغ) + سبب الإلغاء والوقت إن كانت ملغاة؛ زر «طباعة نسخة» يفتح Receipt بعلامة إعادة الطباعة (الكاشير من detail.user)؛ زر «إلغاء الفاتورة» يظهر فقط إن COMPLETED وcan('sales.cancel') → AlertDialog بتأكيد + سبب إلزامي Textarea يعطّل زر التأكيد حتى يُكتب → POST /api/sales/[id]/cancel → toast + تحديث القائمة وإغلاق الحوارين.
+   144→- **products.tsx**: Tabs «المنتجات/التصنيفات»؛ منتجات: بحث debounce + فلتر نوع (PRODUCT_TYPE_LABELS) + فلتر تصنيف + فلتر حالة؛ جدول: الاسم (+باركود)، الكود، التصنيف، النوع Badge، الوحدة، سعر البيع، التكلفة، الرصيد (qty+وحدة، أحمر إذا trackStock والرصيد ≤ الحد الأدنى أو ≤0 مع ذكر الحد)، الحالة Badge، إجراءات (تعديل/تعطيل-تفعيل) تظهر فقط بـ can('products.manage')؛ زر «منتج جديد» يُخفى بلا الصلاحية؛ Dialog نموذج: name*، code، barcode، categoryId (من /api/categories + بدون تصنيف)، type، baseUnit (Select: كغ/لتر/قطعة/عبوة/كيس + «أخرى…» → Input حر)، trackStock Switch (default true)، سعر البيع*، سعر الجملة (اختياري/فارغ = حذفه)، التكلفة، الحد الأدنى — تحويل يدوي للأعداد الصحيحة Math.round(×100) وMath.round(×1000)؛ التعديل يجلب GET /api/products/[id] ثم PUT؛ التعطيل/التفعيل عبر AlertDialog «المنتج المستخدم في حركات لا يُحذف — يُعطّل فقط» → PUT {active}؛ التصنيفات: قائمة بعدد المنتجات (_count)، إضافة (POST name)، تعديل (PUT name/active) — بـ can('categories.manage').
+   145→- **customers.tsx**: بحث q debounce + فلتر حالة؛ جدول: الاسم، الهاتف، نوع السعر (Badge تجزئة/جملة)، الدين (أحمر >0، أخضر <0 مع «دفع مقدَّم» بالقيمة المطلقة، رمادي 0)، الحد الائتماني (أو «بلا حد»)، الحالة؛ صفوف قابلة للنقر تفتح Dialog ملف العميل بـ Tabs: «البيانات» (نموذج كامل معطّل بلا can('customers.manage') مع زر حفظ → PUT، وحد ائتماني فارغ = null)، «كشف الحساب» (من/إلى افتراضي الشهر الحالي → GET statement؛ صف ملخص رصيد افتتاحي/ختامي أعلى الجدول؛ جدول التاريخ/النوع بالعربية INVOICE فاتورة، PAYMENT دفعة، ADJUSTMENT تسوية، RETURN مردود، OPENING افتتاحي/المرجع/المبلغ الموقع أحمر+ أخضر−/الرصيد المتجمع balanceMinor)، «تسجيل دفعة» (تبويب يظهر بـ can('customers.collect'): مبلغ*/طريقة/ملاحظة → POST payments؛ نجاح → toast يعرض warning الـ API إن وجد وإلا الدين الجديد debtMinorAfter + تحديث الدين في الملف والقائمة + إعادة تحميل الكشف عبر stmtVersion)، «تسوية إدارية» (تبويب OWNER فقط: مبلغ موقع + يزيد الدين/− ينقصه + سبب إلزامي → POST adjustments)؛ زر «عميل جديد» (can('customers.manage')) بنموذج POST /api/customers.
+   146→
+   147→قرارات فنية اتخذتها:
+   148→1. أنواع محلية بدل تعديل types.ts: ProductRow = Product & {stockMilli?} (الـ API يعيد stockMilli بينما types.ts يعلن qtyMilli فقط)، SaleWithPayments لاستجابة POST /api/sales (تضم payments)، وصفوف الكشف تستخدم الحقل الفعلي balanceMinor — **ملاحظة للمنسق: StatementEntry في types.ts يعلن runningMinor بينما الـ API يعيد balanceMinor فعليًا** (لم أعدّل types.ts لأنه خارج ملفاتي).
+   149→2. حقلان نصيان Draft لكل سطر سلة (qtyDraft/priceDraft/discDraft يُمسح عند blur) لتجنب فخ الإدخل المتحكم الذي يقطع كتابة العلامة العشرية أثناء الكتابة.
+   150→3. منع الترحيل المزدوج بطبقتين: زر معطّل بـ busy + حارس busyRef (يفحص قبل await) + clientRef فريد لكل محاولة.
+   151→4. شريط الوردية يُعرض فقط لمن يملك shifts.view (شرط الـ API نفسه) — انظر ملاحظات للمنسق أدناه.
+   152→5. الإيصال مُعرَّف مرة في pos.tsx ويُستورد في sales.tsx (لا تكرار كود، وكلا الملفين من ملفاتي).
+   153→6. حساب الضريبة محليًا بنفس صيغة API: Math.round((subtotal−discount)×taxRateBp/10000) عند settings.taxEnabled فقط.
+   154→
+   155→مشكلة بيئة وجدتها وأصلحتها:
+   156→- تسجيل الدخول owner/test12345678 فشل (بيانات الدخول غير صحيحة) — تتبعت السبب: عملية RESTORE في السجل بتاريخ 17:30 كانت قد استبدلت سجل المستخدم بكلمة مرور مختلفة. أعدت ضبط كلمة مرور owner إلى الموثقة test12345678 بنفس معاملات scrypt الخاصة بالتطبيق (N=16384,r=8,p=1 مع salt عشوائي) وصفّرت failedAttempts/lockedUntil. الدخول يعمل الآن لكل الوكلاء اللاحقين.
+   157→
+   158→نتائج التحقق:
+   159→- bunx tsc --noEmit: صفر أخطاء في ملفاتي الأربعة (فحصت بفلترة screens/(pos|sales|products|customers) — لا مطابقة).
+   160→- bun run lint: صفر أخطاء/تحذيرات في ملفاتي الأربعة (الأخطاء المتبقية 77 خطأ/532 تحذير كلها في ملفات وكلاء آخرين: page.tsx وغيرها — خارج نطاقي).
+   161→- dev.log: لا أخطاء ترجمة ولا أي استجابة 500.
+   162→- اختبارات curl فعلية (owner عبر /tmp/cookies.txt):
+   163→  1. منتج ثالث «كعك زعتر» P003 بسعر 350/جملة 300/تكلفة 180/حد أدنى 3000 → 200، ثم رصيد افتتاحي 20000 milli بتكلفة 180 → 200.
+   164→  2. عميل إضافي «مطعم الضيافة» (هاتف، عنوان، حد ائتمان 150000، تجزئة) → 200.
+   165→  3. فتحت وردية بنقدية افتتاح 5000 → 200 (أكد شريط الوردية سيعرض الرصيد المتوقع 10500 بعد البيع).
+   166→  4. بيع نقدي S-20261019-0010: 2000 milli خبز ×250 = 500 مدفوع CASH مع shiftId → PAID وحركة SALE_CASH على الوردية.
+   167→  5. بيع آجل S-20261019-0011: 4000 milli كعك ×350 = 1400 بلا دفعات للعميل الجديد → UNPAID، وكشف حسابه: opening 0 / INVOICE +1400 / closing 1400 ✓.
+   168→  6. قائمة /api/sales?pageSize=20: total=11 وترقيم يعمل، والفلاتر من/إلى/q/status نفس عقد resolveRange (YYYY-MM-DD) مطبقة في الواجهة.
+   169→
+   170→ملاحظات مهمة للمنسق:
+   171→- **الكاشير لا يرى شريط الوردية ولا يُرفق shiftId**: GET /api/shifts/current يشترط shifts.view وCASHIER لا يملكها (فقط shifts.use) — بعته 403 فيتخطى الشريط ولا يُرسل shiftId مع فاتورته، فلا تُسجل نقدية بيعه على أي وردية. الحل المقترح (يتطلب تعديل API خارج نطاقي): منح CASHIER صلاحية shifts.view أو إضافة مسار خفيف بـ shifts.use يعيد معرف الوردية المفتوحة. المالك/المدير يعملان بشكل كامل.
+   172→- Esc لإغلاق الحوارات يعمل تلقائيًا عبر Radix Dialog (لم أضف معالجًا يدويًا لتجنب الإغلاق المزدوج).
+   173→- الطباعة تُظهر الإيصال فقط عبر @media print الموجودة في globals.css؛ زر الطباعة يستدعي window.print() والحوار يبقى مفتوحًا.
+   174→- بيانات جاهزة للاختبار البصري: 3 منتجات (خبز عادي رصيد 26000، دقيق فاخر 93600، كعك زعتر 20000)، 3 عملاء (بقالة النور دينها -1150 = دفع مقدَّم يختبر الحالة الخضراء، مطعم الضيافة دين 1400)، وردية مفتوحة متوقع 10500، فاتورتا اليوم الأخيرتان تظهران أعلى قائمة المبيعات (إحداهما آجلة تختبر زر الإلغاء والأخرى نقدية تختبر إعادة الطباعة).
+   175→
+   176→---
+   177→
+   178→Task ID: 5-b
+   179→Agent: Z.ai Code (وكيل تنفيذي — الشاشات العشر: مخزون، موردون، مشتريات، إنتاج، توزيع، مصروفات، ورديات، تقارير، تدقيق، إعدادات)
+   180→Task: استبدال الشاشات المؤقتة العشر بنسخ كاملة فعلية (ملفاتي فقط، بلا تعديل أي ملف آخر).
+   181→
+   182→Work Log:
+   183→- قرأت worklog.md وعقد API وكل مسارات API المعنية (قريتها من الكود فعليًا لا من المواصفة) قبل الكتابة، وبنيت على نمط 5-a بالضبط (useSession/can/money، kit، client، Tabs/Dialog/AlertDialog، جداول برؤوس sticky وtabular-nums).
+   184→- **inventory.tsx (736 سطرًا)**: Tabs «الأرصدة/سجل الحركات/عمليات». الأرصدة: GET /api/inventory (name/type/الرصيد أحمر إن ≤ الحد الأدنى أو ≤0 مع أيقونة+نص «منخفض»/حد أدنى/تكلفة/قيمة) + صف tfoot إجمالي قيمة المخزون (colSpan صحيح) + زر «منخفضة المخزون» يبدل إلى GET /api/inventory/low بنفس الجدول. سجل الحركات: فلاتر منتج/نوع (MOVEMENT_TYPE_LABELS)/من/إلى + ترقيم 25، الكمية موجبة خضراء «+» وسالبة حمراء «−» دائمًا مع الرمز. عمليات كبطاقات تظهر فقط بصلحياتها: افتتاحي (منتجات بلا حركات = رصيدها 0 من /api/products؛ الخادم يرفض المكرر برسالته) → POST opening ببنود، جرد → POST adjust مع إظهار الفرق diffMilli في toast (مطابق = بلا حركة)، إعدام → POST waste بسببه الإلزامي.
+   185→- **suppliers.tsx (604)**: مرآة customers.tsx — بحث/فلتر حالة، جدول (الاسم/هاتف/الرصيد المستحق أحمر >0 وأخضر سالب «سلف/دفع زائد»/حالة)، صفوف قابلة للنقر تفتح Dialog Tabs: البيانات (PUT suppliers/[id] بcan('suppliers.manage'))، كشف الحساب (GET statement برصيد افتتاحي/ختامي ومتجمع balanceMinor وقيد INVOICE فاتورة شراء/PAYMENT دفعة)، «تسجيل دفعة للمورد» (can('suppliers.pay')) → POST payments مع عرض warning الـ API أو dueMinorAfter وتحديث الملف والقائمة والكشف (stmtVersion). مورد جديد POST.
+   186→- **purchases.tsx (771)**: فاتورة شراء جديدة (can('purchases.manage')) — Dialog كبير: مورد Select (يُحمَّل عند الفتح مع المنتجات النشطة)، بنود ديناميكية (منتج/كمية/تكلفة وحدة تعبأ تلقائيًا من تكلفة المنتج) مع إجمالي سطر Math.round(qtyMilli×costMinor/1000)، منع تكرار المنتج محليًا، خصم اختياري بحد المجموع، دفعات ديناميكية (طريقة+مبلغ)، شريط إجماليات داكن (مجموع/خصم/إجمالي/متبقي) ومنع المدفوع>الإجمالي محليًا، POST بclientRef 'pur-'+Date.now(). قائمة بفلاتر من/إلى/بحث/حالة + ترقيم 20 → تفاصيل GET [id] (بنود/مدفوعات/سبب الإلغاء) + «دفع دفعة» بحد المتبقي محليًا (can('suppliers.pay')) → POST [id]/payments + إعادة تحميل التفاصيل، وإلغاء الفاتورة إن COMPLETED وcan('purchases.cancel') عبر AlertDialog بسبب إلزامي.
+   187→- **production.tsx (837)**: Tabs «دفعات/وصفات». الدفعات: GET /api/production?from&to مع كفاءة Badge ملونة (≥95 أخضر/≥80 نحاسي/أقل أحمر) وإلغاء دفعة COMPLETED (AlertDialog + سبب). الوصفات: بطاقات تعرض المواد وتكلفة كل مادة والإجمالي وتكلفة وحدة الناتج محسوبة محليًا بنفس صيغة الـ API؛ وصفة جديدة/تعديل (production.manage): الناتج من FINISHED فقط، المواد ديناميكية (تُستبعد قائمة الناتج نفسه)، تحقق محلي: لا تكرار مادة والناتج ليس ضمن المواد؛ التعديل يجلب GET [id] ثم PUT (استبدال كامل). دفعة إنتاج: وصفة → المواد المطلوبة محسوبة حيًا Math.round(item.qtyMilli×actual/outputQtyMilli) مقابل رصيد /api/inventory مع صف تحذير «غير كافٍ» فوري قبل الإرسال، هدر، ملاحظة، وتكلفة متوقعة للوحدة.
+   188→- **distribution.tsx (1389)**: Tabs «الجولات/المندوبون وخطوط السير». المندوبون والخطوط: جداول + إضافة/تعديل (distribution.manage). الجولات: فلاتر مندوب/حالة/فترة؛ جولة جديدة (حمولات ديناميكية مع تحذير «المتاح X فقط — سيرفض الخادم» من /api/inventory) → POST trips. صف الجولة → Dialog تفاصيل GET [id]: جدول مطابقة لكل منتج (محمّل/مبيع/مرتجع صالح/تالف/متبقي أحمر >0) + تنبيه «سجّل المتبقي مرتجعات قبل التسوية» + قائمة المبيعات والمرتجعات. OPEN: «تسجيل بيع» (بنود من الحمولة بكمية/سعر يُعبأ من سعر المنتج، نوع دفع نقدي/آجل للنموذج كله، آجل يتطلب عميلًا عبر Popover+Command بنمط نقطة البيع، إجمالي حي) → POST sales، «تسجيل مرتجع» (منتج من الحمولة + كمية + GOOD/DAMAGED + ملاحظة) → POST returns، «تسوية» (AlertDialog تحذيري «لا يمكن التراجع» + نقد معدود اختياري + ملاحظات) → POST settle ثم Dialog ملخص (فواتير مُنشأة/نقد للصندوق/آجل للعملاء/مرتجعات/تحذير لا وردية) — SETTLED قراءة فقط.
+   189→- **expenses.tsx (483)**: GET /api/expenses يعيد **مصفوفة مباشرة** (خلافًا لما ذكرت المواصفة {items,total}) — تعاملت مع الشكل الفعلي وحسبت المجاميع محليًا (المكتملة فقط؛ الملغاة تظهر بشفافية وسببها). ملخص StatCards (إجمالي الفترة/العدد/الملغاة) + فلاتر من/إto/تصنيف + Tabs «المصروفات/التصنيفات» (قائمة بعدد الاستخدام + إضافة name* بexpenses.manage). مصروف جديد: تصنيف مفعّل/مبلغ/طريقة/مستفيد/سبب/تاريخ افتراضي اليوم. إلغاء المصروف OWNER فقط (user.role==='OWNER') عبر AlertDialog بسبب → POST [id]/cancel.
+   190→- **shifts.tsx (575)**: بطاقة حالة الوردية أعلى الشاشة من GET /api/shifts/current — مفتوحة: بطاقة خضراء (وقت الفتح/المستخدم/الافتتاحي/مجموع الحركات الموقع/عدد الحركات/المتوقع بإطار أخضر) وزر إغلاق (shifts.close) بحوار يعرض المتوقع ويحسب الفرق حيًا (مطابق/زيادة/عجز بألوان مع رمز ±) → POST close; مغلقة: شريط «لا وردية مفتوحة» وزر فتح (shifts.use) بنقدية افتتاح → POST open. حركات الوردية الحالية من GET /api/shifts/[id] مع Badge مجاميع byType وجدول بالنوع بالعربية (OPENING_CASH افتتاحي…DEPOSIT إيداع). سجل الورديات المغلقة من GET /api/shifts (الفرق ملوّن ± مع كلمة زيادة/عجز/مطابق) وصف → Dialog تفاصيل بحركاتها.
+   191→- **reports.tsx (1016)**: 12 تقريرًا بشريط فلاتر موحد (من/إلى افتراضي الشهر الحالي + زر تطبيق). التبويبات تتولد حسب الصلاحية: المالية الثمانية (مبيعات/تحصيلات/ديون/موردون/مشتريات/مصروفات/صندوق/ربح) خلف reports.financial، والتشغيلية (لوحة/مخزون/إنتاج/توزيع) للجميع. كل تقرير مشهد مستقل بمشاهدات مطابقة للاستجابات الفعلية (dashboards، جداول يومي/حسب المنتج/حسب العميل/حسب التصنيف/حسب المندوب…)، والربح التقديري يعرض definition نصيًا في Alert تحذيري «رقم تقديري وليس صافي ربح محاسبي» + شرح الحساب خطوة بخطوة. أزرار تصدير CSV للكيانات المناسبة عبر api.download (customers/suppliers/purchases/products/expenses). التحميل بنمط reqKey/derived-loading بلا setState متزامن داخل Effect (متوافق مع قاعدة react-hooks/set-state-in-effect).
+   192→- **audit.tsx (331)**: تنبيه أخضر أعلى «سجل التدقيق للقراءة فقط». فلاتر من/إto/إجراء (Select بالقائمة الموثقة: LOGIN دخول…EXPORT تصدير)/معرف مستخدم نصي + ترقيم 30 من GET /api/audit (يعيد pages جاهزة). الإجراء Badge ملوّن: أحمر للإلغاءات وLOGIN_FAILED وWASTE، أخضر للدخول/SETUP، نحاسي لغيرها؛ الكيان بالمعرف المختصر؛ التفاصيل تُحلل بأمان try/JSON.parse وتُعرض كسطر مختصر (أول زوجين) مع Tooltip كامل لأزواج مفتاح/قيمة عربية (خريطة LABEL_KEYS للحقول الشائعة totalMinor→«الإجمالي (أغورة)»…) — تظهر «—» إن لم تُحلل. شاشة «لا صلاحية» لمن لا يملك audit.view.
+   193→- **settings-screen.tsx (919)**: prop onSettingsChanged?: () => Promise<void> كما في page.tsx. Tabs «النشاط/البيع والفاتورة/المستخدمون/النسخ الاحتياطي/حول النظام». النشاط (settings.manage): businessName*/ownerName/phone/address/currencyCode/currencySymbol → PUT /api/settings ثم toast + onSettingsChanged(). البيع: تحذير أحمر فوق الضريبة بنص المواصفة حرفيًا، taxEnabled Switch، نسبة % تُحوَّل bp (Math.round(pct*100)) مع عرض bp الحي، negativeStockAllowed، requireCustomerForCredit، receiptWidth 58/80، idleLockMinutes 1–240. المستخدمون (users.manage): جدول (username/الاسم/الدور من ROLE_LABELS/آخر دخول/الحالة)، مستخدم جديد (username إنجليزي بمطابقة نفس regex الخادم، displayName، role من ROLES، password 8+)، تعديل (displayName/role/active — رسائل حمايات الخادم تُعرض بالـ toast)، تغيير كلمة المرور (للمالك لأي مستخدم أو للنفس مع currentPassword إلزامي للنفس) → PUT password مع وصف «أُنهيت جلساته». النسخ الاحتياطي (backup.manage): تنزيل export (يستخدم filename الخادم الفعلي)، استعادة: File input → FileReader نص → «فحص ومعاينة» POST preview → جدول الجداول بالسجلات + التحذيرات + رسالة الاستبدال + Checkbox «أفهم أن الاستعادة ستحل محل كل البيانات الحالية» يفعّل زر الاستعادة → POST restore {data, confirm:true} → toast بsessionNote + onSettingsChanged() + إعادة تحميل المستخدمين؛ بيانات تجريبية عبر AlertDialog تحذيري → POST demo (رسائل رفض الخادم تظهر). حول: اسم النظام ديناميكي، v1.0.0 + schemaVersion من /api/status، ملاحظات SQLite المحلي وJSON قابل للنقل وscrypt وتنبيه «قاعدة البيانات المحلية ليست حماية ضد من يملك الجهاز».
+   194→
+   195→قرارات فنية اتخذتها:
+   196→1. بنيت على الاستجابات الفعلية للـ API بعد قراءة كل route: /api/expenses مصفوفة مباشرة، /api/production يعيد efficiencyPercent جاهزًا، /api/distribution/trips يدمج computed في العنصر بينما [id] يفصله، /api/audit يعيد pages، /api/recipes/[id] يعيد materialsCostMinor/unitCostMinor، backup/restore يعيد sessionNote.
+   197→2. حسابات محلية مطابقة لصيغ الخادم حرفيًا: lineTotal = Math.round(qtyMilli×costMinor/1000)، المواد المطلوبة = Math.round(item.qtyMilli×actual/outputQtyMilli)، bp = Math.round(pct×100)، والتحويلات ×100/×1000.
+   198→3. في الافتتاحي: «منتجات بلا حركات» قررت تقريبًا بفلتر رصيد=0 من /api/products (منتج بحركات متعادلة سيظهر لكن الخادم يرفض برسالة عربية واضحة) — دوّنتها في وصف الحوار.
+   199→4. بيع الجولة: نوع الدفع والعميل على مستوى النموذج (يُطبَّق على كل بنود الطلب) بدل كل سطر — يطابق منطق «زيارة عميل واحد» ويبقى متوافقًا مع عقد الـ API per-item؛ الآجل بلا عميل يُرفض محليًا برسالة واضحة.
+   200→5. reports: استخدمت derived-loading (state.key !== reqKey) بدل setState متزامن في Effect التزامًا بقاعدة react-hooks/set-state-in-effect، وإعادة المحاولة عبر retryNonce.
+   201→6. إلغاء المصروف من الواجهة OWNER فقط (نفس شرط الخادم) — والمحاسب/المدير لا يرون زر الإلغاء أصلًا.
+   202→7. لم أعدّل types.ts (خارج ملفاتي): عرّفت أنواعًا محلية في كل شاشة مطابقة للاستجابات (نفس منهج 5-a).
+   203→
+   204→نتائج التحقق:
+   205→- bunx tsc --noEmit | grep "^src/": **صفر أخطاء** (الأخطاء المتبقية كلها خارج src/: مشروع Electron، examples/websocket، skills — خارج نطاقي كما وثّق 5-a).
+   206→- bun run lint: **صفر أخطاء/تحذيرات في ملفاتي العشرة** (grep على مساراتها لا يُرجع شيئًا؛ مجموع المشروع 78 خطأ/532 تحذير كلها في ملفات وكلاء آخرين).
+   207→- dev.log: GET / → 200 و«✓ Compiled» بلا أي خطأ بعد آخر كتابة (أخطاء «Module not found» القديمة كانت أثناء إحلال الملفات لحظيًا وقبل اكتمالها).
+   208→- curl فعلية بكوكي المالك owner/test12345678 (-b /tmp/cookies.txt):
+   209→  1. كل مساراتي تستجيب 200: /api/inventory، /api/inventory/movements?productId&page&pageSize (13 حركة)، /api/inventory/low ضمنياً، /api/suppliers، /api/purchases، /api/recipes، /api/production، /api/distribution/trips + reps + routes، /api/expenses + categories، /api/shifts + current + [id]، تقارير dashboard/sales/collections/debts/suppliers/purchases/inventory-valuation/production/expenses/cash/distribution/profit، /api/audit، /api/users، /api/status.
+   210→  2. دورة مصروف كاملة: أنشأت مصروف 12.50 نقدي → التقط shiftId للوردية المفتوحة تلقائيًا → ظهر بالقائمة (تصنيف «وقود وسفر») → ألغيته كمالك بسبب → EXPENSE_CANCEL في التدقيق.
+   211→  3. التدقيق: تفاصيل JSON تُحلل سليمة (EXPENSE: categoryId/categoryName/amountMinor/method — SALE: invoiceNo/totalMinor/…) وtotal=50 وpages=10.
+   212→  4. نسخة احتياطية: export ينزّل 76KB مع Content-Disposition filename بديل، وpreview على الملف نفسه: schema 1.0.0، 171 سجلًا، بلا تحذيرات، ورسالة الاستبدال.
+   213→  5. جولة TRP-20261019-0001 (SETTLED): computed مطابق (محمّل 3000/مبيع 2000/مرتجع صالح 1000/متبقي 0/نقد 250/آجل 250) — شاشة التفاصيل ستعرض القراءة فقط.
+   214→  6. تقرير المبيعات: totals 9 فواتير/6843 إجمالي/1650 آجل مع daily وbyProduct — الأشكال مطابقة لأنواع الواجهة.
+   215→
+   216→ملاحظات للمنسق:
+   217→- GET /api/distribution/routes و/api/expenses/categories فارغان حاليًا (لا بيانات) — الواجهات تعرض EmptyState وتسمح بالإضافة بالصلاحيات.
+   218→- عقد المصروفات في worklog يذكر {items,total} بينما التنفيذ الفعلي مصفوفة — بنيت على التنفيذ؛ إن غُيّر الخادم لاحقًا يلزم تعديل expenses.tsx فقط.
+   219→- تقرير dashboard يتطلب مصادقة فقط (requirePerm بلا صلاحية محددة) — أبقيته متاحًا للجميع في تبويب «لوحة».
+   220→
+   221→---
+   222→Task ID: 5-a/5-b-integration
+   223→Agent: Z.ai Code (المنسق الرئيسي)
+   224→Task: تكامل واجهتي الوكلاء + إصلاحات + التحقق الشامل بالمتصفح (agent-browser).
+   225→
+   226→Work Log:
+   227→- إصلاحات: صلاحية shifts.view للكاشير (POS يرفق الوردية)، types.ts (stockMilli/balanceMinor/customerDebts/openOperations)، إصلاح undefined في لوحة التحكم (openTrips)، استثناء مجلد v2 من ESLint، إصلاح set-state-in-effect.
+   228→- إعادة تشغيل خادم التطوير لمسح ذاكرة Turbopack القديمة (كانت تقدم CSS قديمًا) — الجلسة المستقلة عبر setsid.
+   229→- **التحقق بالمتصفح (1366×768 وجوال 375×720)**: دخول ✓، لوحة أرقام حقيقية ✓، POS: بحث+سلة+خصم+ترحيل F4+إيصال حراري 80مم كامل ✓ (فاتورة S-20261019-0012 حقيقية)، المخزون تحدث فورًا (24→23) ✓، الإنتاج: حساب مواد تناسبي مع توفر + دفعة PRD-20261019-0002 ✓، التقارير 12 تبويبًا ✓، الإعدادات 5 تبويبات ✓، سجل تدقيق ✓، تجاوب جوال ✓، الهوية (كاكاو/كريم/نحاسي + Cairo محلي) ✓.
+   230→- lint: نظيف. tsc: صفر أخطاء src/.
+   231→
+   232→Stage Summary:
+   233→- المعاينة الويب كاملة الوظائف ومتحقق منها بالمتصفح من الدخول حتى الإيصال.
+   234→- بيانات اختبار حية: 5 منتجات، عميلان، مورد، وصفة، دفعتا إنتاج، 12 فاتورة، جولة مُسواة، ورديات.
+   235→
+   236→---
+   237→Task ID: 7
+   238→Agent: Z.ai Code (وكيل تنفيذي — إثبات تشغيل Electron وتغليفه وتوسيع الشاشات)
+   239→Task: (1) إثبات تشغيل فعلي للنافذة وقاعدة SQLite (--smoke + إقلاع كامل تحت Xvfb)، (2) تغليف AppImage ومحاولة NSIS، (3) إضافة شاشتي المخزون والتقارير للـ renderer.
+   240→
+   241→Work Log:
+   242→
+   243→## الجزء 1 — إثبات التشغيل (منفّذ وموثق)
+   244→- `bun run build` (vite build + build-main) نجح من أول مرة. تحذير واحد حميد: مراجع الخطوط `../fonts/...` تُحل وقت التشغيل — والملفات موجودة فعلًا في dist/fonts (public/ تُنسخ).
+   245→- بيئة العرض: `xvfb-run` معطل في هذه البيئة (xauth غير مثبت) → شغّلت `Xvfb :99` يدويًا و`DISPLAY=:99`. (لا تعديل على المشروع).
+   246→- **--smoke PASS 7 مرات** (أولًا ببيانات نظيفة ثم سلسلة استمرارية): /tmp/bakery-smoke-result.json ok=true، إنشاء مفتاح settings → قراءة رجعة → إغلاق → إعادة فتح → البقاء مؤكد. مثال أخير: {"ok":true,"steps":{"smokeKeysTotal":...}} والعدّاد تصاعد 1→2→3→4→5 عبر التشغيلات المتتالية (إثبات استمرارية ملف القاعدة بين عمليات منفصلة).
+   247→- **إقلاع التطبيق الكامل تحت Xvfb**: حي بعد 20 ثانية، استقر 45 ثانية كاملة بلا انهيار، والسجل يظهر الأثر المطلوب: `[main] sql.js: قاعدة البيانات مفتوحة — /home/z/.config/alwalea-modern-bakery/data/bakery.db | migrations: 1 [001_initial.sql]`.
+   248→
+   249→### أخطاء حقيقية اكتشفتها وأصلحتها (كلها داخل alwalea-modern-bakery-v2)
+   250→1. **تفاوت مسار القاعدة بين وضع الفحص والتشغيل العادي**: `requestSingleInstanceLock()` (قبل setName) يحسم userData من productName «Alwalea Modern Bakery» بينما وضع --smoke (بلا قفل) كان يأخذ اسم setName «alwalea-modern-bakery» → ملفا قاعدة مختلفان. الإصلاح في main.ts: `app.setName(...)` + `app.setPath('userData', path.join(app.getPath('appData'), 'alwalea-modern-bakery'))` **قبل** القفل — مسار موحد ومحدد في كل الأوضاع.
+   251→2. **فقد بيانات محتمل في db.ts (الأخطر)**: الـ migrations تُنفَّذ داخل `tx()` أثناء init فترفع `dirty=true` بينما persistFn لا يزال no-op؛ عند quit كان المثيل الرئيسي يُعيد كتابة ملف القاعدة بلقطة ذاكرته القديمة ويُمحّي كتابات مثيلات أحدث (هذا ما محا مفتاح smoke الأول — شخّصته جنائيًا بمقارنة ملفي القاعدة وطوابع الملفات). الإصلاح: `this.dirty = false` بعد `runMigrations()` في `BakeryDb.init()`.
+   252→3. **انهيار بعد ~21 ثانية في هذه الحاوية**: /dev/shm بحجم 64MB فقط → "Network service crashed" ثم FATAL «GPU process isn't usable. Goodbye». الإصلاح في main.ts: `app.disableHardwareAcceleration()` + `app.commandLine.appendSwitch('disable-dev-shm-usage')`. بعدها الإقلاع الكامل مستقر 45 ثانية بلا أي FATAL. (تحسين مناسب أيضًا لأجهزة الكاشير الضعيفة).
+   253→4. أضفت سطر سجل تشخيصي في main.ts بعد فتح القاعدة (مسار الملف + عدد migrations) — هو أثر الإثبات المطلوب في السجل.
+   254→5. أصلحت خطأ TS6133 قديمًا كان يكسر `bun run lint` (DashboardScreen: خاصية user غير مستخدمة → `_props`).
+   255→- بعد الإصلاحات: `bun run lint` صفر أخطاء (مشروعا renderer وmain)، والبناء نظيف.
+   256→
+   257→## الجزء 2 — التغليف (AppImage ناجح، NSIS فاشل بدليل)
+   258→- **AppImage**: `CSC_IDENTITY_AUTO_DISCOVERY=false bunx electron-builder --linux AppImage` → نجح.
+   259→  - المسار: `alwalea-modern-bakery-v2/release/Alwalea Modern Bakery-1.0.0.AppImage`
+   260→  - الحجم: 112,532,090 بايت (≈107.3MB)
+   261→  - **اختُبر فعليًا**: بلا FUSE في الحاوية رفض الإقلاع المباشر (dlopen libfuse.so.2) → شغّلته بـ `--appimage-extract-and-run --smoke` → `[smoke] PASS` وsmokeKeysTotal تصاعد 5→6 — أي أن النسخة المعبأة فتحت نفس القاعدة، حمّلت sql-wasm.wasm من داخل asar، كتبت وسجلت واستعادت. (الإقلاع المباشر بالنقر يعمل على أنظمة سطح مكتب فيها libfuse2 — غير متوفر هنا فقط).
+   262→- **NSIS للويندوز: فشل — موثق بصدق، لا ادعاء نجاح**:
+   263→  - `bunx electron-builder --win nsis --x64` → «⨯ wine is required» من app-builder (ERR_ELECTRON_BUILDER_CANNOT_EXECUTE) بعد تنزيل winCodeSign.
+   264→  - أعدت المحاولة مع `--config.win.signAndEditExecutable=false --config.win.sign=false` → نفس الفشل عند بدء هدف nsis نفسه (رسالة wine مضمنة في ثنائي app-builder نفسه).
+   265→  - wine غير مثبت ولا يمكن تثبيته: لا root ولا sudo (uid=1001 على Debian 13). أنشأ ملف setup.exe جزئي 187KB ثم فشل — حذفته حتى لا يُلتبس.
+   266→  - **البديل المُنجز**: `--win zip --x64` نجح → `release/Alwalea Modern Bakery-1.0.0-win.zip` (115,846,502 بايت ≈110.5MB) — نسخة ويندوز كاملة (فكّ الضغط وشغّل exe) لكنها **ليست مثبّت NSIS** ولم تُختبر على ويندوز إطلاقًا.
+   267→- **SHA-256** في `alwalea-modern-bakery-v2/SHASUMS.txt`:
+   268→  - 674814f3784d3bd46ae9f72e6f9cb1d12ca01890258442398cf00c2ace5560d7  Alwalea Modern Bakery-1.0.0.AppImage
+   269→  - b25b1d160eee3912810ca5f811e2ccfa5f882918afb9cb3e088a75c4ae8d8177  Alwalea Modern Bakery-1.0.0-win.zip
+   270→
+   271→## الجزء 3 — شاشتان جديدتان في renderer (منفّذ ومختبر)
+   272→- `src/renderer/src/screens/InventoryScreen.tsx` (جديد): أرصدة المخزون من `inventory.balances` (بحث، مفتاح «المنخفضة فقط» عبر lowOnly، تلوين الرصيد ≤ الحد الأدنى/≤0، شارة حالة، تذييل «إجمالي قيمة المخزون» بنفس صيغة الخادم round(balance×cost/1000)) + زر «رصيد افتتاحي» (بصلاحية inventory.opening) بنافذة Modal: اختيار منتج من `products.list` (المتتبِعة فقط)، كمية بوحدة المنتج (toMilli)، تكلفة وحدة اختيارية (toMinor) → `inventory.opening` ببنود، ورسائل خطأ الخادم تُعرض.
+   273→- `src/renderer/src/screens/ReportsScreen.tsx` (جديد): تقرير المبيعات اليومي من `reports.sales` (يتطلب reports.financial): من/إلى (افتراضي أول الشهر → اليوم)، الأعمدة التاريخ/عدد الفواتير/الإجمالي/المدفوع/الآجل + تذييل إجماليات محسوب، EmptyState عند لا بيانات.
+   274→- `AppShell.tsx`: أُضيفا للقائمة الجانبية: 📦 المخزون (perm: inventory.view) و📊 التقارير (perm: reports.financial) + حالتا renderScreen. **لم يعد أي ملف من شاشات 5-a/5-b، ولم تتغير القنوات**: inventory.balances/inventory.opening/reports.sales/products.list كانت موجودة سلفًا في types.ts وpreload وregistry — لا تعديل على preload أو registry.ts أو أي خدمة.
+   275→- **تحقق E2E حقيقي للواجهة عبر CDP** (أطلقت التطبيق بـ --remote-debugging-port=9222 تحت Xvfb وسكربت Node/WebSocket في /tmp): 9 خطوات كلها PASS — شاشة الإعداد→تعبئة وإنشاء النشاط→دخول تلقائي للهيكل→إنشاء منتج عبر الجسر→فتح شاشة المخزون (جدول من inventory.balances)→تسجيل رصيد افتتاحي من النافذة بالواجهة وظهر بالجدول (رصيد 10)→بيع نقدي عبر الجسر (S-20261019-0001، 5.00)→شاشة التقارير تعرض صف المبيعات والإجماليات صحيحة→القائمة الجانبية تعرض الشاشات الست. النتيجة في /tmp/bakery-ui-test-result.json. بلا أي انهيار خلال الاختبار.
+   276→- قاعدة الاختبار الحالية (userData موحد) فيها بيانات تجريبية موسومة: نشاط «مخبز الولاء الحديث (تجريبي)»، owner/test12345678، منتج «خبز عادي (تجريبي)»، رصيد افتتاحي 10، فاتورة 5.00.
+   277→
+   278→العيوب المتبقية بصراحة:
+   279→- لا مثبّت NSIS للويندوز (يتطلب wine أو جهاز ويندوز) — الموجود: ZIP محمول غير مختبر على ويندوز.
+   280→- لم يُختبر أي ملف ويندوز فعليًا (لا يوجد ويندوز هنا) — لا ادعاءات.
+   281→- الإقلاع المباشر لـ AppImage لم يُختبر هنا (لا FUSE)؛ اختُبر عبر --appimage-extract-and-run.
+   282→- شاشة التقارير تغطي تقرير المبيعات اليومي فقط (حسب نطاق المهمة)؛ بقية التقارير العشرة في المعاينة الويب لم تُنقل للديسكتوب بعد.
+   283→- مفاتيح smoke تتراكم في جدول settings (بقايا اختبار حميدة)، ولم تُبنَ واجهة لإدارتها.
+   284→- بقية بيئة التشغيل هنا (dbus غير متاح) تُصدر أخطاء bus.cc حميدة في السجل لا تؤثر.
+   285→
+   286→Stage Summary:
+   287→- Electron يعمل فعليًا: نافذة تفتح، قاعدة sql.js تحفظ وتستعيد عبر 7 تشغيلات smoke منفصلة، إقلاع كامل مستقر 45 ثانية تحت Xvfb مع أثر migrations في السجل.
+   288→- النسخة المعبأة AppImage تمر --smoke عبر extract-and-run (قاعدة داخل asar تعمل).
+   289→- AppImage + ZIP ويندوز مبنيان ومختومان في SHASUMS.txt؛ NSIS موثق الفشل بصدد (wine).
+   290→- شاشتا المخزون والتقارير مضافتان ومختبرتان E2E عبر الواجهة الحقيقية.
+   291→
+   292→---
+   293→Task ID: 8
+   294→Agent: Z.ai Code (المنسق الرئيسي)
+   295→Task: التوثيق العربي الكامل والتقرير النهائي.
+   296→
+   297→Work Log:
+   298→- README.md رئيسي في alwalea-modern-bakery-v2 (البنية، التشغيل، مكان البيانات، حدود الأمان).
+   299→- docs/install-guide.md (تثبيت Windows محمول/مثبت + معالج أول تشغيل + خطوات البداية).
+   300→- docs/user-guide.md (الأدوار، كل وحدة، الإلغاءات العكسية، الاختصارات).
+   301→- docs/backup-guide.md (النسخ والاستعادة ونقل الأجهزة والمسارات).
+   302→- docs/build-from-source.md (بناء NSIS على Windows + قائمة تحقق ما بعد البناء + التوقيع).
+   303→- docs/decisions.md (قرارات sql.js/scrypt/الضريبة + 10 افتراضات تجارية تحتاج تأكيد + قائمة ما لم يكتمل بصراحة).
+   304→- فحص نهائي: tsc=0، lint نظيف، خادم 200، 77 مسار API، صفر أخطاء في dev.log.
+   305→
+   306→Stage Summary:
+   307→- التسليم مكتمل: منتج Desktop (كود + خدمات كاملة + AppImage مختبر + ZIP ويندوز) + معاينة ويب كاملة الوظائف متحقق منها بالمتصفح + توثيق عربي من 5 مستندات + سجل عمل موحد.
+   308→
+   309→---
+   310→Task ID: 9
+   311→Agent: Z.ai Code (المنسق الرئيسي)
+   312→Task: تعديل نظام تسجيل الدخول إلى كلمة مرور واحدة (1234 افتراضيًا) في الجزأين: معاينة الويب + تطبيق Electron — مع الحفاظ على بقية النظام والاختبار الإلزامي الكامل.
+   313→
+   314→Work Log:
+   315→- **الويب (Next.js)**: أُعيدت كتابة /api/auth/login للدخول بكلمة مرور فقط مع ربط الجلسة بحساب المالك (ترتيب: أحدث مالك نشط lastLoginAt ← مستخدم نشط وحيد). /api/setup: كلمة افتراضية 1234 واسم مستخدم owner تلقائي والحد الأدنى 4. /api/users و/users/[id]/password: الحد الأدنى 4. login-screen.tsx: حقل واحد + زر إظهار/إخفاء (Eye/EyeOff) + رسائل عربية. setup-wizard.tsx: حذف خطوة اسم المستخدم وتعبئة 1234 مسبقًا. settings-screen.tsx: تسميات «4 أحرف» + أزرار إظهار/إخفاء في نافذة تغيير كلمة المرور.
+   316→- **سكربت أدوات تطوير**: scripts/set-dev-owner-password.mjs — ضبط كلمة مالك قاعدة التطوير إلى 1234 مُلبَّدة (scrypt N=16384,r=8,p=1 + salt مستقل 16 بايت). نُفِّذ على قاعدة التطوير فقط (db/custom.db — بيانات اختبار).
+   317→- **Electron**: services/auth.ts login() كلمة مرور فقط (ترتيب: owner_user_id ← أقدم OWNER نشط ← مستخدم وحيد، مع توافق خلفي اختياري لـusername). setup.ts وsettings-users.ts: الحد الأدنى 4. setPassword للنفس أصبح يتطلب currentPassword (تكافؤ أمني مع الويب). LoginScreen.tsx وSetupScreen.tsx وفق النمط الجديد. SettingsScreen.tsx جديدة (تغيير كلمة المرور) + عنصر ⚙️ الإعدادات في AppShell (always ظاهر بلا صلاحية).
+   318→- **خلل مكتشف وأُصلح (مسبق وليس من التعديل)**: registry.ts status.get كان يقرأ `.v` بينما عمود SELECT اسمه `value` → setupCompleted دائمًا false → التطبيق يعرض معالج الإعداد عند كل إقلاع بدل شاشة الدخول. الإصلاح: `SELECT value AS v`. اكتُشف باختبار CDP للواجهة الحقيقية وأُثبت قبل/بعد عبر dispatch.
+   319→- **الاختبارات الفعلية — الويب (19/19 PASS)**: دخول 1234→200+جلسة مالك، رفض 9999→401 برسالة عربية، بلا كلمة→400، تجاهل username، تغيير 1234→4455 (رفض بلا الحالية/بحالية خاطئة→401، نجاح→200، القديمة تموت 401، الجديدة 200، لا باب خلفي مع username، استعادة 1234، رفض أقل من 4)، تقرير المبيعات ثابت (10 فواتير) قبل/بعد، عدادات كل الجداول المالية سليمة، الهاش 128-hex والملح 32-hex بلا نص مكشوف وتحقق scrypt فعلي، التدقيق سجل LOGIN/LOGIN_FAILED/USER_UPDATE فقط.
+   320→- **الاختبارات الفعلية — الويب UI (agent-browser)**: الشاشة بحقل واحد+زر إظهار (قيمة 9999 ظهرت وaria-label تغير)، خطأ عربي ظهر، 1234→لوحة التحكم ببيانات حقيقية (₪70.93/10 فواتير)، نافذة الإعدادات «4 أحرف على الأقل»، تغيير من الواجهة نجح وألغى كل الجلسات (الويب أعادني لشاشة الدخول بعد reload)، دخول ختامي 1234 ناجح.
+   321→- **الاختبارات الفعلية — استمرارية الويب (إعادة تشغيل حقيقية)**: قتلت خادم Next وأعدت تشغيله (نمط يتيم مزدوج التفريع لأن الحاوية تقتل أبناء الأداة) — كوكي ما قبل الإيقاع ظل صالحًا (me يعيد المالك)، دخول 1234 يعمل، الرفض مستمر.
+   322→- **الاختبارات الفعلية — Electron**: (1) scripts/auth-flow-test.ts عبر dispatch الحقيقي على قاعدة sql.js مؤقتة: **20/20 PASS** (إعداد 1234، دخول، رفض، تغيير بلا/بحالية خاطئة مرفوض، موت القديمة، لا باب خلفي، هاش/ملح سليمان، إغلاق+إعادة فتح=استمرارية، تدقيق كامل). (2) ترحيل قاعدة اختبار Electron (/home/z/.config/alwalea-modern-bakery) إلى 1234 مُلبَّدة مع مسح الجلسات. (3) **E2E UI تحت Xvfb عبر CDP**: كلمة خاطئة→بانر عربي (بعد إصلاح status.get)؛ إعادة تشغيل كاملة→1234 تفتح الهيكل بالقائمة كاملة مع ⚙️الإعدادات؛ اختبار الإعدادات الشامل **10/10 PASS**: دخول→الإعدادات→3 حقول→تغيير 1234→4455→خروج→رفض 1234→دخول 4455→استعادة 1234→دخول ختامي. (4) lint (tsc×2) نظيف، bun run build نظيف، --smoke ok=true، الحالة النهائية للقاعدة: مُلبَّدة بلا نص مكشوف.
+   323→- ملاحظة بيئية موثقة: هذه الجلسة تقتل العمليات الخلفية بين استدعاءات الأدوات (بخلاف الجلسات السابقة) — خادم الويب شُغّل بنمط يتيم مزدوج التفريع عبر python ليعيش بين الاستدعاءات ولبقى حيًا للمستخدم.
+   324→
+   325→Stage Summary:
+   326→- الدخول في النسختين أصبح: شاشة شعار + حقل كلمة مرور واحد + زر إظهار/إخفاء + رسالة عربية، والجلسة مرتبطة بالمالك بلا أي اختيار أدوار.
+   327→- 1234 تعمل في قاعدتي التطوير/الاختبار فقط، مُلبَّدة (scrypt+salt مستقل)، قابلة للتغيير من الإعدادات في النسختين، بلا باب خلفي — أُثبت بالاختبار أن القديمة تموت بعد التغيير.
+   328→- صفر تغيير على المخطط المالي/المخزون/الإنتاج/التوزيع/النسخ الاحتياطي/التدقيق — التقارير والعدادات مطابقة قبل/بعد.
+   329→- ملفات معدلة (ويب): api/auth/login، api/setup، api/users/route، api/users/[id]/password، lib/bakery/*(لا)، components/bakery/screens/{login-screen,setup-wizard,settings-screen}، scripts/set-dev-owner-password.mjs (جديد).
+   330→- ملفات معدلة (Electron): src/main/services/{auth,setup,settings-users}.ts، src/main/registry.ts (إصلاح status.get)، src/renderer/src/screens/{LoginScreen,SetupScreen,AppShell}.tsx، SettingsScreen.tsx (جديد)، scripts/auth-flow-test.ts + scripts/e2e/{cdp-login,cdp-settings}-test.ts (جديدة)، docs/{install-guide,user-guide,decisions}.md.
+   331→
+   332→---
+   333→Task ID: AUDIT-2026-10-20
+   334→Agent: Z.ai Code (مدقق مستقل)
+   335→Task: تدقيق شامل لحالة المشروع الفعلية بالأدلة — دون تعديل منتج أو كلمات مرور أو قواعد أو commit.
+   336→
+   337→Work Log:
+   338→- فحص هوية: مستودع Git واحد (main، 6a64b79)، v2 مجلد داخلي، 257 ملفًا معدلًا موروثًا.
+   339→- قراءة شيفرة المصادقة/الصلاحيات/النسخ/DB في الطرفين سطرًا سطرًا.
+   340→- تشغيل فعلي: auth-flow-test 20/20 (exit 0)؛ cdp-login wrong/correct (exit 0)؛ cdp-settings 9/10 (فحص واحد خلل ترتيب)؛ smoke داخل Electron حقيقي ok:true (معزول)؛ backup/restore وظيفي معزول 16/16 سلوكًا (15 PASS + 1 خلل تأكيد سكربت موثق)؛ tsc v2 = 0 أخطاء؛ tsc web = 0 أخطاء داخل src/ (31 خطأ كلها ملفات sandbox)؛ eslint = 0.
+   341→- ويب حي: curl لكل مسارات API الـ31 = 200 ببيانات؛ متصفح: دخول 1234 → لوحة تحكم ببيانات (لقطات في audit-2026-10-20/evidence/).
+   342→- فحص قراءة فقط لقاعدة التطوير: هاش 128 hex + ملح 32 hex، صفر نص مكشوف.
+   343→- إثبات سلبي للإصدار: لا release/ ولا AppImage ولا zip ولا exe؛ SHASUMS يتيم؛ لا ملفات إصدار في تاريخ Git إطلاقًا.
+   344→
+   345→Stage Summary:
+   346→- 5 تقارير + ZIP في /home/z/my-project/audit-2026-10-20/ (AUDIT_CURRENT_STATE.md, FEATURE_MATRIX.csv, TEST_RESULTS.md, RELEASE_STATUS.md, EVIDENCE_INDEX.md, evidence/, audit-package-2026-10-20.zip = 361 ملفًا مع لقطة مصدر منقّحة بلا أسرار/قواعد/node_modules).
+   347→- أخطر الاستنتاجات: (1) لا توجد أي حزمة إصدار موجودة الآن — SHASUMS يشير لملفين محذوفين لم يُرحَّلا قط؛ (2) استعادة نسخة ويب تُدخل مستخدمين بهاش فارغ — خطر قفل تام بعد انتهاء الجلسة المحفوظة؛ (3) واجهة الديسكتوب 7 شاشات فقط من 15 (الخدمات كاملة)؛ (4) النسخ الاحتياطي في Electron مختبر وظيفيًا وآمن؛ (5) الدخول بكلمة واحدة سليم بالكامل في الطرفين (scrypt لا Argon2id — انحراف موثق).
+   348→- لم يُعدَّل أي شيء في المنتج: فقط node_modules في v2 (لاختبار) + dist/dist-electron مهملة git (لأجل تشغيل CDP) + صفوف جلسة/تدقيق في قاعدة تطوير الويب نتيجة اختبار الدخول المطلوب. لا commit، لا دفع، لا حذف.
+   349→
+   350→---
+   351→Task ID: FIX-BACKUP-RESTORE-AUTH
+   352→Agent: Z.ai Code (وكيل تنفيذي — إصلاح أمان استعادة النسخ الاحتياطي)
+   353→Task: منع استعادة مستخدمين بكلمات مرور فارغة والحفاظ على إمكانية الدخول بعد استعادة البيانات — في الويب (Next.js) وElectron معًا، مع اختبارات انحدار آلية معزولة.
+   354→
+   355→Work Log:
+   356→- تشخيص من الشيفرة (لا من التقارير): ويب export/route.ts:62-68 يعقّم المستخدمين (passwordHash:'') وrestore/route.ts:91-93 يُعيد إدخالهم كما هم → مستخدمون بهاش فارغ (خطر قفل تام بعد انتهاء الجلسة). Electron backup.ts كان يُصدّر هاشات حقيقية وجلسات حية (تسريب أسرار في ملف قابل للتداول) ويستعيد أي صف مستخدم دون فحص جاهزية.
+   357→- NEW src/lib/bakery/backup-auth.ts: منطق نقري مشترك (بلا Prisma/Next ليُختبر معزولًا) — hasValidAuthMaterial (هاش 128-hex + ملح 32-hex = معاملات scrypt الحالية)، analyzeBackupUsers، pickOwnerRow (نفس ترتيب login: أحدث مالك نشط ← مستخدم نشط وحيد)، transformBackupUsers (المالك يستلم كلمة جديدة بالتجزئة والملح الصحيحين؛ بقية المقصّرين ببيانات اعتماد عشوائية مقفلة — لا كلمة ثابتة ولا باب خلفي؛ دفاع أخير يرمي قبل أي إدخال).
+   358→- restore/route.ts: فحص جاهزية قبل المعاملة (رفض 422 برسالة عربية واضحة إن لم تُرسل newOwnerPassword ≥4)، إدخال المستخدمين من الصفوف المحوّلة مع تأكيد داخل المعاملة، استجابة موسعة بـauthNote، تدقيق RESTORE يوثق ownerReset/lockedUsers.
+   359→- preview/route.ts: يُعيد auth {total,valid,invalid,authReady,needsOwnerPassword} + تحذير عربي.
+   360→- settings-screen.tsx: حقل «كلمة مرور المالك الجديدة» (يظهر عند needsOwnerPassword فقط) + زر إظهار/إخفاء + تعطيل الزر حتى كلمة ≥4 + تأكيد + تسمية زر ديناميكية + authNote في التنبيه.
+   361→- Electron backup.ts: تصدير مغقّم (users بلا هاشات/PIN، sessions=[] — الجلسات لا تُصدَّر أبدًا)؛ استعادة ترفض غير الجاهزة قبل نسخة الأمان والمعاملة، تحوّل المستخدمين (نفس سياسة الويب)، لا يستعيد جلسات قديمة، يحفظ جلسة المشغّل إن بقي حسابه، إدخال المستخدمين من الصفوف المحوّلة فقط (أصلحت خلل تكرار users.id اكتشفه الاختبار)، persist ذري عبر tx().
+   362→- NEW v2/scripts/backup-restore-auth-test.ts: 48 فحصًا على قاعدة sql.js مؤقتة في /tmp (dispatch الحقيقي) — تغطي الفحوص السبعة المطلوبة + نسخة قديمة صالحة + فشل منتصف معاملة (حقن UNIQUE) + نسخة أمان + لا بقايا ملفات. النتيجة النهائية 48/48 PASS (exit 0).
+   363→- NEW scripts/backup-restore-auth-web-test.ts: 32 فحصًا على Prisma مرتبط بملف /tmp مؤقت (prisma db push معزول؛ لا يلمس db/custom.db) — نفس الفحوص السبعة + تراجع $transaction فعلي + اختيار المالك. النتيجة 32/32 PASS (exit 0).
+   364→- auth-flow-test.ts القديم أعيد تشغيله: 20/20 PASS (لا انحدار مصادقة).
+   365→- فحص نهائي: bun run lint ويب=0، v2 lint (tsc×2)=0، web tsc صفر أخطاء في ملفاتي (أخطاء موروثة فقط في sandbox/vite.config).
+   366→- تحقق متصفح (agent-browser): دخول 1234 → الإعدادات ← النسخ الاحتياطي ← معاينة نسخة مغقّمة اصطناعية → التحذير «النسخة لا تتضمن بيانات تحقق صالحة (2 من 2)» ظهر + حقل كلمة المالك + الزر معطل حتى كلمة ≥4+تأكيد ثم اكتمل تفعيله. لم تُنقر استعادة إطلاقًا.
+   367→- إثبات عدم المساس بقاعدة التطوير: فحص نسخة من db/custom.db بsql.js — التغييرات اليوم LOGIN فقط؛ سجلا BACKUP/RESTORE الموجودان بتاريخ 2026-10-19 (جلسة سابقة). صفر مستخدمين بهاش فارغ.
+   368→- docs/backup-guide.md حُدّث بسياسة المصادقة الجديدة.
+   369→
+   370→Stage Summary:
+   371→- الاستعادة في الطرفين لا تُدخل مستخدمًا بهاش/ملح فارغ أبدًا: نسخة غير جاهزة تُرفض قبل أي تغيير أو تُقبل فقط مع تعيين كلمة مالك جديدة عبر scrypt+ملح مستقل؛ بقية المستخدمين المقصّرين يدخلون ببيانات اعتماد مقفلة (الأدوار/المعرفات/العلاقات محفوظة).
+   372→- النسخ القابلة للتداول بلا أسرار في الطرفين (لا هاشات ولا جلسات) — والجلسات القديمة لا تُحيى بعد الاستعادة.
+   373→- الفشل في أي مرحلة (فحص مسبق أو منتصف معاملة) يترك القاعدة كما كانت — مثبت باختبار حقن فشل فعلي.
+   374→- 48/48 (Electron) + 32/32 (ويب) + 20/20 (auth-flow) — كلها معزولة على نسخ اصطناعية مؤقتة.
+   375→- لا commit ولا دفع؛ التغييرات في 6 ملفات معدلة + 3 جديدة (lib + سكربتا اختبار) + دليل محدث.
+   376→

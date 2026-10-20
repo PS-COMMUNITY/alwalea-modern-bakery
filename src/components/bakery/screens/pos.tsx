@@ -435,6 +435,8 @@ export function PosScreen() {
         description: e instanceof ApiError ? e.message : 'خطأ غير متوقع',
         variant: 'destructive',
       })
+      // قد تكون الوردية فُتحت من مكان آخر — نحدّث الحالة
+      await loadShift()
     } finally {
       setShiftBusy(false)
     }
@@ -472,7 +474,7 @@ export function PosScreen() {
         title="نقطة البيع"
         subtitle="سجل فاتورة جديدة — F2 للبحث، F4 للترحيل"
         actions={
-          <Button type="button" variant="outline" onClick={() => { setOpeningCash('0'); setShiftDlg(true) }} disabled={!can('shifts.use')}>
+          <Button type="button" variant="outline" onClick={() => { setOpeningCash('0'); setShiftDlg(true) }} disabled={!can('shifts.use') || !!shift?.shift}>
             <Landmark className="h-4 w-4" aria-hidden />
             فتح وردية
           </Button>

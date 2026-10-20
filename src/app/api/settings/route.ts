@@ -32,10 +32,26 @@ export async function PUT(req: NextRequest) {
     const currencySymbol = str(body.currencySymbol, 8)
     if (currencySymbol) data.currencySymbol = currencySymbol
     if (typeof body.taxEnabled === 'boolean') data.taxEnabled = body.taxEnabled
-    if (typeof body.taxRateBp === 'number' && Number.isInteger(body.taxRateBp) && body.taxRateBp >= 0 && body.taxRateBp <= 10000) data.taxRateBp = body.taxRateBp
+    // التحقق الصريح: القيمة الحاضرة وغير الصالحة تُرفض برسالة عربية واضحة (لا تجاهل صامت)
+    if ('taxRateBp' in body && body.taxRateBp !== null && body.taxRateBp !== undefined) {
+      const v = body.taxRateBp
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 10000)
+        return fail(400, 'نسبة الضريبة غير صالحة (عدد صحيح من 0 إلى 10000 نقطة أساس — مثال: 1700 = 17%)')
+      data.taxRateBp = v
+    }
     if (typeof body.negativeStockAllowed === 'boolean') data.negativeStockAllowed = body.negativeStockAllowed
-    if (typeof body.receiptWidth === 'number' && [58, 80].includes(body.receiptWidth)) data.receiptWidth = body.receiptWidth
-    if (typeof body.idleLockMinutes === 'number' && Number.isInteger(body.idleLockMinutes) && body.idleLockMinutes >= 1 && body.idleLockMinutes <= 240) data.idleLockMinutes = body.idleLockMinutes
+    if ('receiptWidth' in body && body.receiptWidth !== null && body.receiptWidth !== undefined) {
+      const v = body.receiptWidth
+      if (typeof v !== 'number' || ![58, 80].includes(v))
+        return fail(400, 'عرض الإيصال يجب أن يكون 58 أو 80 مم')
+      data.receiptWidth = v
+    }
+    if ('idleLockMinutes' in body && body.idleLockMinutes !== null && body.idleLockMinutes !== undefined) {
+      const v = body.idleLockMinutes
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 240)
+        return fail(400, 'مدة القفل التلقائي غير صالحة (من 1 إلى 240 دقيقة)')
+      data.idleLockMinutes = v
+    }
     if (typeof body.requireCustomerForCredit === 'boolean') data.requireCustomerForCredit = body.requireCustomerForCredit
 
     const s = await db.settings.update({ where: { id: 1 }, data })

@@ -23,6 +23,14 @@ import { AuditScreen } from '@/components/bakery/screens/audit'
 import { SettingsScreen } from '@/components/bakery/screens/settings-screen'
 import { LoadingRows } from '@/components/bakery/kit'
 
+const PAGE_IDS = ['dashboard', 'pos', 'sales', 'products', 'inventory', 'customers', 'suppliers', 'purchases', 'production', 'distribution', 'expenses', 'shifts', 'reports', 'audit', 'settings'] as const
+
+/** قراءة الشاشة المطلوبة من رابط الصفحة (تعميق الروابط: التحديث والزر الخلفي يحافظان على الموقع) */
+function pageFromHash(): PageId | null {
+  const h = typeof window !== 'undefined' ? window.location.hash.replace(/^#\/?/, '') : ''
+  return (PAGE_IDS as readonly string[]).includes(h) ? (h as PageId) : null
+}
+
 type AppState = 'loading' | 'setup' | 'login' | 'locked' | 'ready'
 
 export default function BakeryApp() {
@@ -30,8 +38,27 @@ export default function BakeryApp() {
   const [status, setStatus] = useState<StatusInfo | null>(null)
   const [user, setUser] = useState<AuthUser | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
-  const [page, setPage] = useState<PageId>('dashboard')
+  const [page, setPageRaw] = useState<PageId>(() => pageFromHash() ?? 'dashboard')
   const [bootError, setBootError] = useState('')
+
+  // مزامنة الشاشة مع رابط الصفحة (hash) لدعم التحديث والزر الخلفي
+  const setPage = useCallback((p: PageId) => {
+    setPageRaw(prev => {
+      if (prev !== p && typeof window !== 'undefined') {
+        window.history.pushState(null, '', `#${p}`)
+      }
+      return p
+    })
+  }, [])
+
+  useEffect(() => {
+    const onPop = () => {
+      const p = pageFromHash()
+      if (p) setPageRaw(p)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   const loadStatus = useCallback(async () => {
     try {
@@ -77,7 +104,8 @@ export default function BakeryApp() {
     setSettings(st)
     setUser(u)
     setState('ready')
-    setPage('dashboard')
+    // شاشة البداية من الرابط إن وُجدت (دون إدخال سجل تاريخ جديد)
+    setPageRaw(pageFromHash() ?? 'dashboard')
   }, [])
 
   const handleLock = useCallback(() => {

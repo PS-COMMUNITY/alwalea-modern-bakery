@@ -86,6 +86,13 @@ export async function POST(req: NextRequest) {
     if (!actualQtyMilli || actualQtyMilli <= 0) return fail(400, 'الكمية الفعلية يجب أن تكون أكبر من صفر')
     if (wasteQtyMilli === null || wasteQtyMilli < 0) return fail(400, 'كمية الهدر يجب أن تكون صفرًا أو أكثر')
 
+    // منع الترحيل المزدوج عبر clientRef (توحيد مع البيع والشراء)
+    const clientRef = str(body.clientRef, 100)
+    if (clientRef) {
+      const existing = await db.productionBatch.findUnique({ where: { clientRef } })
+      if (existing) return ok(existing)
+    }
+
     try {
       const batch = await db.$transaction(async tx => {
         const recipe = await tx.recipe.findUnique({
@@ -130,6 +137,7 @@ export async function POST(req: NextRequest) {
             materialsCostMinor,
             unitCostMinor,
             status: 'COMPLETED',
+            clientRef: clientRef ?? undefined,
             notes: str(body.notes, 500) ?? undefined,
             userId: r.user.id,
           },

@@ -1,0 +1,31 @@
+import { chromium } from '@playwright/test'
+const b = await chromium.launch(); const p = await (await b.newContext({ locale: 'ar' })).newPage()
+await p.goto('http://localhost:3000/')
+await p.locator('[type=password]').fill('1234')
+await p.getByRole('button', { name: 'دخول', exact: true }).click()
+await p.getByRole('button', { name: 'خروج', exact: true }).waitFor({ timeout: 20000 })
+const nav = p.getByRole('navigation', { name: 'القائمة الرئيسية' })
+// المنتجات: زمن ظهور الصفوف
+let t0 = Date.now()
+await nav.getByRole('button', { name: 'المنتجات', exact: true }).click()
+await p.waitForFunction(() => document.querySelectorAll('table tbody tr').length >= 200, { timeout: 30000 })
+console.log('المنتجات: ظهور أول 200 صف بعد', Date.now() - t0, 'ms — صفوف:', await p.evaluate(() => document.querySelectorAll('table tbody tr').length))
+// البحث: من الإدخال حتى تحديث الصفوف
+const box = p.getByPlaceholder(/بحث بالاسم/)
+t0 = Date.now()
+await box.fill('بالجملة 1999')
+await p.waitForFunction(() => { const n = document.querySelectorAll('table tbody tr').length; return n >= 1 && n <= 20 }, { timeout: 30000 })
+console.log('بحث مصفٍ: الصفوف نزلت إلى ≤20 بعد', Date.now() - t0, 'ms')
+// نقطة البيع: بطاقات المنتجات
+t0 = Date.now()
+await nav.getByRole('button', { name: 'نقطة البيع' }).click()
+await p.waitForFunction(() => document.querySelectorAll('button[aria-label^="إضافة"]').length > 1000, { timeout: 30000 })
+console.log('نقطة البيع: ظهور بطاقات 2000 منتج بعد', Date.now() - t0, 'ms')
+// بحث نقطة البيع
+const pbox = p.getByPlaceholder(/ابحث بالاسم/)
+t0 = Date.now()
+await pbox.fill('بالجملة 1999')
+await p.waitForFunction(() => document.querySelectorAll('button[aria-label^="إضافة"]').length <= 20, { timeout: 30000 })
+console.log('بحث نقطة البيع: التصفية بعد', Date.now() - t0, 'ms')
+await b.close()
+process.exit(0)

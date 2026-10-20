@@ -82,6 +82,8 @@ export function ProductsScreen() {
   // ===== فلاتر المنتجات =====
   const [qInput, setQInput] = useState('')
   const [q, setQ] = useState('')
+  // عرض تدريجي: كتالوج كبير (آلاف المنتجات) لا يُرسم كله دفعة واحدة — زر «عرض المزيد» يوسّع النافذة
+  const [visibleCount, setVisibleCount] = useState(200)
   const [type, setType] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [activeFilter, setActiveFilter] = useState('')
@@ -111,9 +113,12 @@ export function ProductsScreen() {
   const [catsError, setCatsError] = useState('')
 
   useEffect(() => {
-    const t = setTimeout(() => setQ(qInput.trim()), 250)
+    const t = setTimeout(() => { setQ(qInput.trim()); setVisibleCount(200) }, 250)
     return () => clearTimeout(t)
   }, [qInput])
+
+  // إعادة نافذة العرض عند تغيير أي فلتر
+  useEffect(() => { setVisibleCount(200) }, [type, categoryId, activeFilter])
 
   const loadCategories = useCallback(async () => {
     setCatsLoading(true)
@@ -408,7 +413,7 @@ export function ProductsScreen() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(p => (
+                  {rows.slice(0, visibleCount).map(p => (
                     <tr key={p.id} className="border-t transition-colors hover:bg-cream-100">
                       <td className="p-3">
                         <span className="font-semibold">{p.name}</span>
@@ -458,6 +463,17 @@ export function ProductsScreen() {
                   ))}
                 </tbody>
               </table>
+              {rows.length > visibleCount ? (
+                <div className="border-t p-3 text-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setVisibleCount(c => c + 200)}
+                  >
+                    عرض المزيد ({(rows.length - visibleCount).toLocaleString('ar')} متبقي من {rows.length.toLocaleString('ar')})
+                  </Button>
+                </div>
+              ) : null}
             </TableShell>
           ) : null}
         </TabsContent>

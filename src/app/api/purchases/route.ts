@@ -138,12 +138,13 @@ export async function POST(req: NextRequest) {
       async tx => {
         const invoiceNo = await nextNumberTx(tx, 'P')
 
-        // الوردية المفتوحة بهذا المعرف (للنقد فقط)
+        // الوردية المفتوحة: بالمعرف المرسل إن وجد، وإلا أحدث وردية مفتوحة
+        // (توحيد مع مسارات النقد — كي لا تفوت مدفوعات الشراء النقدية من الصندوق إن لم يرسل الوجهة shiftId)
         let openShiftId: string | undefined
-        if (bodyShiftId) {
-          const openShift = await tx.shift.findFirst({ where: { id: bodyShiftId, status: 'OPEN' } })
-          openShiftId = openShift?.id
-        }
+        const openShift = bodyShiftId
+          ? await tx.shift.findFirst({ where: { id: bodyShiftId, status: 'OPEN' } })
+          : await tx.shift.findFirst({ where: { status: 'OPEN' }, orderBy: { openedAt: 'desc' } })
+        openShiftId = openShift?.id
 
         const purchase = await tx.purchase.create({
           data: {
