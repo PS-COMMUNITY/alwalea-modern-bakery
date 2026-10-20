@@ -328,3 +328,21 @@ Stage Summary:
 - صفر تغيير على المخطط المالي/المخزون/الإنتاج/التوزيع/النسخ الاحتياطي/التدقيق — التقارير والعدادات مطابقة قبل/بعد.
 - ملفات معدلة (ويب): api/auth/login، api/setup، api/users/route، api/users/[id]/password، lib/bakery/*(لا)، components/bakery/screens/{login-screen,setup-wizard,settings-screen}، scripts/set-dev-owner-password.mjs (جديد).
 - ملفات معدلة (Electron): src/main/services/{auth,setup,settings-users}.ts، src/main/registry.ts (إصلاح status.get)، src/renderer/src/screens/{LoginScreen,SetupScreen,AppShell}.tsx، SettingsScreen.tsx (جديد)، scripts/auth-flow-test.ts + scripts/e2e/{cdp-login,cdp-settings}-test.ts (جديدة)، docs/{install-guide,user-guide,decisions}.md.
+
+---
+Task ID: AUDIT-2026-10-20
+Agent: Z.ai Code (مدقق مستقل)
+Task: تدقيق شامل لحالة المشروع الفعلية بالأدلة — دون تعديل منتج أو كلمات مرور أو قواعد أو commit.
+
+Work Log:
+- فحص هوية: مستودع Git واحد (main، 6a64b79)، v2 مجلد داخلي، 257 ملفًا معدلًا موروثًا.
+- قراءة شيفرة المصادقة/الصلاحيات/النسخ/DB في الطرفين سطرًا سطرًا.
+- تشغيل فعلي: auth-flow-test 20/20 (exit 0)؛ cdp-login wrong/correct (exit 0)؛ cdp-settings 9/10 (فحص واحد خلل ترتيب)؛ smoke داخل Electron حقيقي ok:true (معزول)؛ backup/restore وظيفي معزول 16/16 سلوكًا (15 PASS + 1 خلل تأكيد سكربت موثق)؛ tsc v2 = 0 أخطاء؛ tsc web = 0 أخطاء داخل src/ (31 خطأ كلها ملفات sandbox)؛ eslint = 0.
+- ويب حي: curl لكل مسارات API الـ31 = 200 ببيانات؛ متصفح: دخول 1234 → لوحة تحكم ببيانات (لقطات في audit-2026-10-20/evidence/).
+- فحص قراءة فقط لقاعدة التطوير: هاش 128 hex + ملح 32 hex، صفر نص مكشوف.
+- إثبات سلبي للإصدار: لا release/ ولا AppImage ولا zip ولا exe؛ SHASUMS يتيم؛ لا ملفات إصدار في تاريخ Git إطلاقًا.
+
+Stage Summary:
+- 5 تقارير + ZIP في /home/z/my-project/audit-2026-10-20/ (AUDIT_CURRENT_STATE.md, FEATURE_MATRIX.csv, TEST_RESULTS.md, RELEASE_STATUS.md, EVIDENCE_INDEX.md, evidence/, audit-package-2026-10-20.zip = 361 ملفًا مع لقطة مصدر منقّحة بلا أسرار/قواعد/node_modules).
+- أخطر الاستنتاجات: (1) لا توجد أي حزمة إصدار موجودة الآن — SHASUMS يشير لملفين محذوفين لم يُرحَّلا قط؛ (2) استعادة نسخة ويب تُدخل مستخدمين بهاش فارغ — خطر قفل تام بعد انتهاء الجلسة المحفوظة؛ (3) واجهة الديسكتوب 7 شاشات فقط من 15 (الخدمات كاملة)؛ (4) النسخ الاحتياطي في Electron مختبر وظيفيًا وآمن؛ (5) الدخول بكلمة واحدة سليم بالكامل في الطرفين (scrypt لا Argon2id — انحراف موثق).
+- لم يُعدَّل أي شيء في المنتج: فقط node_modules في v2 (لاختبار) + dist/dist-electron مهملة git (لأجل تشغيل CDP) + صفوف جلسة/تدقيق في قاعدة تطوير الويب نتيجة اختبار الدخول المطلوب. لا commit، لا دفع، لا حذف.
