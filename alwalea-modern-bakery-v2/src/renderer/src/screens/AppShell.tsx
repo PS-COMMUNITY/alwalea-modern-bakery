@@ -10,6 +10,14 @@ import DashboardScreen from './DashboardScreen'
 import ProductsScreen from './ProductsScreen'
 import PosScreen from './PosScreen'
 import CustomersScreen from './CustomersScreen'
+import SuppliersScreen from './SuppliersScreen'
+import PurchasesScreen from './PurchasesScreen'
+import SalesScreen from './SalesScreen'
+import ProductionScreen from './ProductionScreen'
+import DistributionScreen from './DistributionScreen'
+import ShiftsScreen from './ShiftsScreen'
+import ExpensesScreen from './ExpensesScreen'
+import AuditScreen from './AuditScreen'
 import InventoryScreen from './InventoryScreen'
 import ReportsScreen from './ReportsScreen'
 import SettingsScreen from './SettingsScreen'
@@ -28,6 +36,14 @@ const NAV: NavDef[] = [
   { key: 'products', label: 'المنتجات', icon: '🥐', perm: 'products.view' },
   { key: 'inventory', label: 'المخزون', icon: '📦', perm: 'inventory.view' },
   { key: 'customers', label: 'العملاء', icon: '👥', perm: 'customers.view' },
+  { key: 'suppliers', label: 'الموردون', icon: '🚚', perm: 'suppliers.view' },
+  { key: 'purchases', label: 'المشتريات', icon: '🛒', perm: 'purchases.view' },
+  { key: 'sales', label: 'المبيعات', icon: '📋', perm: 'sales.view' },
+  { key: 'production', label: 'الإنتاج', icon: '🍞', perm: 'production.view' },
+  { key: 'distribution', label: 'التوزيع', icon: '🛵', perm: 'distribution.view' },
+  { key: 'shifts', label: 'الورديات والصندوق', icon: '💰', perm: 'shifts.view' },
+  { key: 'expenses', label: 'المصروفات', icon: '🧾', perm: 'expenses.view' },
+  { key: 'audit', label: 'سجل التدقيق', icon: '🛡️', perm: 'audit.view' },
   { key: 'reports', label: 'التقارير', icon: '📊', perm: 'reports.financial' },
   { key: 'settings', label: 'الإعدادات', icon: '⚙️', perm: '', always: true }
 ]
@@ -58,6 +74,22 @@ export default function AppShell(props: {
         return <ProductsScreen />
       case 'customers':
         return <CustomersScreen />
+      case 'suppliers':
+        return <SuppliersScreen user={props.user} />
+      case 'purchases':
+        return <PurchasesScreen user={props.user} />
+      case 'sales':
+        return <SalesScreen user={props.user} />
+      case 'production':
+        return <ProductionScreen user={props.user} />
+      case 'distribution':
+        return <DistributionScreen user={props.user} />
+      case 'shifts':
+        return <ShiftsScreen user={props.user} />
+      case 'expenses':
+        return <ExpensesScreen user={props.user} />
+      case 'audit':
+        return <AuditScreen />
       case 'inventory':
         return <InventoryScreen user={props.user} />
       case 'reports':

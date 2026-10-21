@@ -37,6 +37,12 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "alwalea-modern-bakery-v2",
+    "scripts/qa",
+    "scripts/*.ts",
+    "tool-results",
+    "examples",
+    "skills"
   ]
 }

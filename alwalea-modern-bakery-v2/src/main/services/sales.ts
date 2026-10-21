@@ -59,8 +59,8 @@ export function createSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
   return db.tx(() => {
     // منع الترحيل المزدوج عبر clientRef
     if (clientRef) {
-      const existing = db.get<number>('SELECT id FROM sales WHERE client_ref = ?', [clientRef])
-      if (existing) return getSale(ctx, { id: Number(existing) })
+      const existing = db.get<{ id: number }>('SELECT id FROM sales WHERE client_ref = ?', [clientRef])
+      if (existing) return getSale(ctx, { id: Number(existing.id) })
     }
 
     if (customerId !== null) {

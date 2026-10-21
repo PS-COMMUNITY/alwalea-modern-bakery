@@ -1,6 +1,7 @@
 // =============================================================
 // مخبز الولاء الحديث — الوصفات والإنتاج (ذرية) + إلغاء عكسي
 // خصم مواد PRODUCTION_OUT− + إضافة ناتج PRODUCTION_IN+ + تكلفة مواد
+// clientRef يمنع الترحيل المزدوج (توحيد مع البيع والشراء — إصلاح BUG-4)
 // =============================================================
 import { ApiError, reqStr, optStr, reqInt, reqMilli, reqDate, reqArr, obj } from '../validate'
 import { SvcCtx, addStockMovement, assertStock, stockBalance, nextDocNo } from './helpers'
@@ -110,8 +111,15 @@ export function createBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
   const wasteQtyMilli = payload.wasteQtyMilli === undefined || payload.wasteQtyMilli === null ? 0 : reqMilli(payload.wasteQtyMilli, 'كمية الهالك')
   const date = payload.date === undefined || payload.date === null ? db.today() : reqDate(payload.date, 'التاريخ')
   const notes = optStr(payload.notes, 'ملاحظات', 500)
+  const clientRef = optStr(payload.clientRef, 'مرجع العميل', 120)
 
   return db.tx(() => {
+    // منع الترحيل المزدوج عبر clientRef (نقر مزدوج/إعادة إرسال) — كما في البيع والشراء
+    if (clientRef) {
+      const existing = db.get<{ id: number }>('SELECT id FROM production_batches WHERE client_ref = ?', [clientRef])
+      if (existing) return getBatch(ctx, { id: Number(existing.id) })
+    }
+
     const recipe = db.get<{ id: number; name: string; product_id: number }>('SELECT id, name, product_id FROM recipes WHERE id = ?', [recipeId])
     if (!recipe) throw new ApiError('الوصفة غير موجودة', 404)
     const items = db.query<{ product_id: number; name: string; qty_milli: number; cost_minor: number }>(
@@ -143,9 +151,9 @@ export function createBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
 
     const batchNo = nextDocNo(db, 'PRD', date)
     db.run(
-      `INSERT INTO production_batches (batch_no, recipe_id, date, actual_qty_milli, waste_qty_milli, material_cost_minor, unit_cost_minor, status, notes, user_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)`,
-      [batchNo, recipeId, date, actualQtyMilli, wasteQtyMilli, materialCost, unitCost, notes, ctx.user?.id ?? null, db.now()]
+      `INSERT INTO production_batches (batch_no, recipe_id, date, actual_qty_milli, waste_qty_milli, material_cost_minor, unit_cost_minor, status, notes, client_ref, user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?)`,
+      [batchNo, recipeId, date, actualQtyMilli, wasteQtyMilli, materialCost, unitCost, notes, clientRef, ctx.user?.id ?? null, db.now()]
     )
     const batchId = db.lastId()
 

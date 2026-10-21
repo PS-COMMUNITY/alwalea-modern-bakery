@@ -1,0 +1,2 @@
+8ce3f9e030449fd59df0ba4bf61c853bbcd741f7dfca00f2290fd8a414422b42  Alwalea Modern Bakery-1.0.0-setup.exe
+65c90e97e43edd684dc9e2e9083abb059251a3fe4756ae5609a8ce4a560fafe8  Alwalea Modern Bakery-1.0.0-portable.exe

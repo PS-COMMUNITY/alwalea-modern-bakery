@@ -449,8 +449,8 @@ export function settleTrip(ctx: SvcCtx, payload: Record<string, unknown>): Recor
       const clientRef = `trip:${tripId}:${g.paymentType === 'CASH' ? 'cash' : `cust:${g.customerId}`}`
 
       // أمان إضافي: client_ref فريد — لو موجود نستخدم الفاتورة القائمة
-      const existing = db.get<number>('SELECT id FROM sales WHERE client_ref = ?', [clientRef])
-      const saleId = existing ? Number(existing) : (() => {
+      const existing = db.get<{ id: number }>('SELECT id FROM sales WHERE client_ref = ?', [clientRef])
+      const saleId = existing ? Number(existing.id) : (() => {
         db.run(
           `INSERT INTO sales (invoice_no, date, customer_id, subtotal_minor, discount_minor, tax_minor, total_minor, paid_minor, credit_minor, status, source, client_ref, note, shift_id, user_id, created_at)
            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'DISTRIBUTION', ?, ?, ?, ?, ?)`,

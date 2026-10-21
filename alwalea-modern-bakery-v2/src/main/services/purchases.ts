@@ -44,8 +44,8 @@ export function createPurchase(ctx: SvcCtx, payload: Record<string, unknown>): R
 
   return db.tx(() => {
     if (clientRef) {
-      const existing = db.get<number>('SELECT id FROM purchases WHERE client_ref = ?', [clientRef])
-      if (existing) return getPurchase(ctx, { id: Number(existing) })
+      const existing = db.get<{ id: number }>('SELECT id FROM purchases WHERE client_ref = ?', [clientRef])
+      if (existing) return getPurchase(ctx, { id: Number(existing.id) })
     }
     const supplier = db.get('SELECT id, name FROM suppliers WHERE id = ?', [supplierId])
     if (!supplier) throw new ApiError('المورد غير موجود', 404)
