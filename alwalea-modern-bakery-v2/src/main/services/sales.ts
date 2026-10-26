@@ -17,6 +17,7 @@ import {
   getBoolSetting,
   nextDocNo
 } from './helpers'
+import { assertMonthOpen } from './period'
 import { requireProductLite } from './catalog'
 
 interface ItemInput {
@@ -57,11 +58,14 @@ export function createSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
   })
 
   return db.tx(() => {
-    // منع الترحيل المزدوج عبر clientRef
+    // منع الترحيل المزدوج عبر clientRef (idempotency أعلى أولوية من الحاجز)
     if (clientRef) {
       const existing = db.get<{ id: number }>('SELECT id FROM sales WHERE client_ref = ?', [clientRef])
       if (existing) return getSale(ctx, { id: Number(existing.id) })
     }
+
+    // حاجز الشهر المقفل: فاتورة جديدة بتاريخها (الافتراضي الآن) — بعد فحص clientRef وقبل المعالجة
+    assertMonthOpen(db, date)
 
     if (customerId !== null) {
       const c = db.get('SELECT id FROM customers WHERE id = ?', [customerId])
@@ -234,6 +238,8 @@ export function cancelSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
   return ctx.db.tx(() => {
     const sale = getSale(ctx, { id })
     if (sale.status === 'CANCELLED') throw new ApiError('الفاتورة ملغاة مسبقًا', 409)
+    // حاجز الشهر المقفل: بتاريخ الفاتورة الأصلية — بعد جلب السجل وقبل أي كتابة
+    assertMonthOpen(ctx.db, sale.date)
 
     for (const item of sale.items) {
       const product = requireProductLite(ctx, item.product_id)

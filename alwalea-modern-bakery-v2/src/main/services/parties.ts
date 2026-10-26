@@ -12,6 +12,7 @@ import {
   addSupplierLedger,
   addCashMovement
 } from './helpers'
+import { assertMonthOpen } from './period'
 
 // ---------- العملاء ----------
 export function listCustomers(ctx: SvcCtx, payload: Record<string, unknown>): Array<PartyRow> {
@@ -134,6 +135,8 @@ export function customerPayment(ctx: SvcCtx, payload: Record<string, unknown>): 
   const note = optStr(payload.note, 'ملاحظة', 300)
   return ctx.db.tx(() => {
     getCustomer(ctx, { id })
+    // حاجز الشهر المقفل: تحصيل بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     addCustomerLedger(ctx.db, { customerId: id, refType: 'PAYMENT', amountMinor: -amountMinor, note })
     addCashMovement(ctx.db, { type: 'COLLECTION', amountMinor, refType: 'customer', refId: id, note: note ?? 'تحصيل دفعة عميل' })
     ctx.audit('customer.payment', 'customer', id, { amountMinor })
@@ -149,6 +152,8 @@ export function customerAdjust(ctx: SvcCtx, payload: Record<string, unknown>): {
   const reason = reqStr(payload.reason, 'سبب التسوية', 300)
   return ctx.db.tx(() => {
     getCustomer(ctx, { id })
+    // حاجز الشهر المقفل: تسوية دفتر بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     addCustomerLedger(ctx.db, { customerId: id, refType: 'ADJUSTMENT', amountMinor, note: reason })
     ctx.audit('customer.adjust', 'customer', id, { amountMinor, reason })
     return { balanceMinor: customerBalance(ctx.db, id) }
@@ -246,6 +251,8 @@ export function supplierPayment(ctx: SvcCtx, payload: Record<string, unknown>): 
   const note = optStr(payload.note, 'ملاحظة', 300)
   return ctx.db.tx(() => {
     getSupplier(ctx, { id })
+    // حاجز الشهر المقفل: دفعة مورد بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     addSupplierLedger(ctx.db, { supplierId: id, refType: 'PAYMENT', amountMinor: -amountMinor, note })
     addCashMovement(ctx.db, { type: 'SUPPLIER_PAYMENT', amountMinor: -amountMinor, refType: 'supplier', refId: id, note: note ?? 'دفعة مورد' })
     ctx.audit('supplier.payment', 'supplier', id, { amountMinor })

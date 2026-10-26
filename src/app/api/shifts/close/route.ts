@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, int, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,9 @@ export async function POST(req: NextRequest) {
 
     const shift = await db.shift.findFirst({ where: { status: 'OPEN' } })
     if (!shift) return fail(409, 'لا توجد وردية مفتوحة')
+
+    // حاجز الشهر المقفل: تسوية صندوق بتاريخ الآن
+    await assertMonthOpen(new Date())
     if (shift.userId !== r.user.id && r.user.role !== 'OWNER') {
       return fail(403, 'لا يمكنك إغلاق وردية فتحها مستخدم آخر')
     }

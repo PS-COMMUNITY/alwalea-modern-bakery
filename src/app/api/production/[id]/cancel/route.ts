@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,6 +34,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const b = await tx.productionBatch.findUnique({ where: { id } })
         if (!b) throw new BizError(404, 'الدفعة غير موجودة')
         if (b.status !== 'COMPLETED') throw new BizError(409, 'الدفعة ملغاة مسبقًا')
+        // حاجز الشهر المقفل: بتاريخ الدفعة الأصلية
+        await assertMonthOpen(b.date)
 
         // حركات الدفعة الأصلية
         const movements = await tx.stockMovement.findMany({

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, int, ok, requirePerm } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,6 +15,8 @@ export async function POST(req: NextRequest) {
     const openingCashMinor = body && body.openingCashMinor !== undefined ? int(body.openingCashMinor) : 0
     if (openingCashMinor === null) return fail(400, 'نقدية الافتتاح يجب أن تكون رقمًا صحيحًا غير سالب')
 
+    // حاجز الشهر المقفل: وردية وحركات نقدية بتاريخ الآن
+    await assertMonthOpen(new Date())
     const existing = await db.shift.findFirst({ where: { status: 'OPEN' } })
     if (existing) return fail(409, 'توجد وردية مفتوحة بالفعل')
 

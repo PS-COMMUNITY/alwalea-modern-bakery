@@ -7,7 +7,7 @@ import { db } from '@/lib/db'
 
 async function main() {
   // تنظيف كامل (قاعدة الاختبار فقط)
-  const tables = ['cashMovement', 'shift', 'tripReturn', 'tripSale', 'tripLoad', 'distributionTrip', 'distributionRoute', 'distributionRep',
+  const tables = ['stockCountItem', 'stockCount', 'periodClose', 'cashMovement', 'shift', 'tripReturn', 'tripSale', 'tripLoad', 'distributionTrip', 'distributionRoute', 'distributionRep',
     'expense', 'expenseCategory', 'productionBatch', 'recipeItem', 'recipe', 'stockMovement', 'purchasePayment', 'purchaseItem', 'purchase',
     'salePayment', 'saleItem', 'sale', 'customerLedgerEntry', 'supplierLedgerEntry', 'customer', 'supplier', 'product', 'category',
     'auditLog', 'backupRecord', 'session', 'user', 'sequence', 'settings']

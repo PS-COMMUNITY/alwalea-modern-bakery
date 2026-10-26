@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { NextRequest, NextResponse } from 'next/server'
 import { hasPerm, type Perm } from './permissions'
+import { MonthLockedError, MONTH_LOCKED_MESSAGE } from './period'
 
 export const SESSION_COOKIE = 'bakery_session'
 const SESSION_HOURS = 12
@@ -78,6 +79,7 @@ export async function handle(fn: () => Promise<NextResponse>): Promise<NextRespo
   try {
     return await fn()
   } catch (e) {
+    if (e instanceof MonthLockedError) return fail(423, MONTH_LOCKED_MESSAGE)
     const msg = e instanceof Error ? e.message : 'خطأ غير متوقع'
     if (msg.includes('Unique constraint')) return fail(409, 'قيمة مكررة: هذا السجل موجود مسبقًا')
     if (msg.includes('Foreign key constraint')) return fail(409, 'لا يمكن تنفيذ العملية: السجل مستخدم في حركات أخرى')

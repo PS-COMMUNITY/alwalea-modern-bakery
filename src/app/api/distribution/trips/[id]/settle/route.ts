@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { fail, handle, int, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,6 +56,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         })
         if (!trip) throw new BizError(404, 'الجولة غير موجودة')
         if (trip.status !== 'OPEN') throw new BizError(409, 'الجولة مسواة مسبقًا')
+        // حاجز الشهر المقفل: التسوية ترحل فواتير وحركات بتاريخ الآن
+        await assertMonthOpen(new Date())
 
         // تحقق: كل المتبقي يجب أن يكون مسجلًا كمرتجعات قبل التسوية
         const remain = new Map<string, { name: string; qty: number }>()

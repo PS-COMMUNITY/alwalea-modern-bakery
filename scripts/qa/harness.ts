@@ -84,6 +84,13 @@ import { GET as repSuppliersGET } from '@/app/api/reports/suppliers/route'
 import { GET as repProductionGET } from '@/app/api/reports/production/route'
 import { GET as repInvValGET } from '@/app/api/reports/inventory-valuation/route'
 import { GET as repDistributionGET } from '@/app/api/reports/distribution/route'
+import { POST as monthClosePOST, GET as monthCloseGET } from '@/app/api/settings/month-close/route'
+import { POST as monthUnlockPOST } from '@/app/api/settings/month-unlock/route'
+import { GET as periodsGET } from '@/app/api/settings/periods/route'
+import { GET as countGET, POST as countPOST } from '@/app/api/inventory/count/route'
+import { GET as countIdGET, PUT as countIdPUT } from '@/app/api/inventory/count/[id]/route'
+import { POST as countApprovePOST } from '@/app/api/inventory/count/[id]/approve/route'
+import { GET as repCountVarianceGET } from '@/app/api/reports/count-variance/route'
 
 type Handler = (req: NextRequest, ctx?: { params: Promise<Record<string, string>> }) => Promise<Response>
 
@@ -183,6 +190,16 @@ const R: Record<string, Handler> = {
   'GET /api/reports/production': repProductionGET,
   'GET /api/reports/inventory-valuation': repInvValGET,
   'GET /api/reports/distribution': repDistributionGET,
+  'POST /api/settings/month-close': monthClosePOST,
+  'GET /api/settings/month-close': monthCloseGET,
+  'POST /api/settings/month-unlock': monthUnlockPOST,
+  'GET /api/settings/periods': periodsGET,
+  'GET /api/inventory/count': countGET,
+  'POST /api/inventory/count': countPOST,
+  'GET /api/inventory/count/[id]': countIdGET,
+  'PUT /api/inventory/count/[id]': countIdPUT,
+  'POST /api/inventory/count/[id]/approve': countApprovePOST,
+  'GET /api/reports/count-variance': repCountVarianceGET,
 }
 
 /* ---------- حالة الجلسة ---------- */

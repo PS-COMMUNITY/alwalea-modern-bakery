@@ -504,3 +504,119 @@ Stage Summary:
 - **231 اختبارًا آليًا ناجحًا صفر فشل** عبر الويب وElectron على قواعد معزولة.
 - قاعدة التطوير الحقيقية سليمة 100% (لم تُكتب أثناء الاختبارات؛ الدخول والبيانات الفعلية تعمل).
 - الحكم: جاهز للتوزيع التجريبي الميداني؛ البند الميداني الوحيد المتبقي: تثبيت تجريبي على جهاز Windows فعلي.
+
+---
+Task ID: P1-E
+Agent: Z.ai Code (مهندس Electron — موازاة الجرد الشهري وإقفال الشهر)
+Task: موازاة الجرد الشهري وإقفال الشهر في Electron v2 + حاجز الشهر المقفل في 19+ مسارًا + شاشة «الجرد والإقفال» + اختبار CDP إلزامي.
+
+Work Log:
+- قراءة worklog (خصوصًا R-1…R-5) وقراءة سطرية للويب: prisma/schema.prisma (PeriodClose/StockCount/StockCountItem)، src/lib/bakery/period.ts، مسارات inventory/count + approve + count-variance + settings/month-close|month-unlock|periods (للسياقات والترتيب الدقيق للحاجز لا للنسخ الأعمى)، ثم لملفات v2: db.ts، registry.ts، validate.ts، helpers.ts، الخدمات السبع، الشاشات، preload، run-release-e2e.sh.
+- **003_period_count.sql (جديد)**: period_close (month UNIQUE YYYY-MM، locked، closed_at/by، unlocked_at/by، unlock_reason، close_count، فهرسا month+locked) + stock_count (count_no UNIQUE، month+status مفهرسان) + stock_count_item (FK ON DELETE CASCADE) — كل الجمل IF NOT EXISTS بنمط 001؛ لم يُمس 001/002. تحقق ترقية فعلي: قاعدة مسبقة الإعداد بـ001+002 فقط عبر node+sql.js → فتحها طبّقت 003 وحدها، الجداول والفهارس الخمسة أُنشئت، البيانات القديمة سليمة، وإعادة تشغيل ملف 003 كاملًا لا تفشل (idempotent).
+- **src/shared/period.ts (جديد)**: MONTH_LOCKED_MESSAGE الحرفي + monthKeyOf + isValidMonthKey + currentMonthKey — مشترك main/renderer بأسلوب shared/money وshared/permissions.
+- **src/main/services/period.ts (جديد)** بأسلوب الخدمات القائمة (دوال متزامنة على SvcCtx): listPeriods، closeMonth (upsert ON CONFLICT مع close_count+1 + تدقيق MONTH_CLOSE)، unlockMonth (reqStr للسبب، 404 إن لا صف، 409 إن غير مقفل، تدقيق MONTH_UNLOCK بالسبب في details)، listCounts (ملخص بsubqueries: items_total/items_counted/diff_items/diff_value_minor)، getCount (بنود + diff_milli لكل بند)، createCount (لقطة stockBalance لكل منتج active track_stock=1، رقم JC-YYYYMM-#### عبر db.nextSeq('jc:YYYYMM')، DRAFT، حاجزا «الآن + شهر الورقة»، تدقيق STOCK_COUNT_CREATE)، saveCountItems (DRAFT فقط + assertMonthOpen(الآن) بعد جلب السجل، تحقق بند∈الورقة، تدقيق STOCK_COUNT_SAVE)، approveCount (DRAFT فقط؛ يمنع بقفل شهر الورقة أو الشهر الحالي بالرسالة الحرفية 423؛ حركات ADJUSTMENT refType='StockCount' refId=id للفروق≠0 بملاحظة «جرد شهري {countNo}»، تدقيق STOCK_COUNT_APPROVE بdiffValueMinor)، countVariance (صفوف مجرودة فقط + summary)، وisMonthLocked(db,date)/assertMonthOpen(db,date) — الحاجز يرمي ApiError(MONTH_LOCKED_MESSAGE, 423) كي يخرج من المغلف {ok:false,error} نصًا حرفيًا بلا prefixes.
+- **حقن الحاجز في الخدمات القائمة** (بالتقسيم الإلزامي): sales.create (بعد clientRef، بتاريخ الفاتورة=الافتراضي الآن) وsales.cancel (بعد الجلب وفحص CANCELLED، بsale.date)؛ purchases.create (بعد clientRef، بتاريخها) وcancelPurchase (بp.date بعد الجلب) وpaySupplierViaPurchase (الآن)؛ parties: customerPayment/customerAdjust/supplierPayment (الآن بعد فحص وجود الطرف)؛ finance: createExpense (بتاريخه) وcancelExpense (بe.date) وopenShiftSvc/closeShiftSvc (الآن — مطابق للويب)؛ inventory: opening/adjust/waste (الآن أول المعاملة)؛ production.create (بعد clientRef، بتاريخ الدفعة) وcancelBatch (بb.date — أُضيف date للاستعلام)؛ distribution: addLoad وsettleTrip (الآن بعد فحص حالة الجولة) — المجموع 19 نقطة حقن مطابقة لقائمة الويب.
+- **registry.ts**: 9 قنوات جديدة بالصلاحيات المطلوبة حرفيًا (period.close/period.unlock/counts.approve→settings.manage؛ counts.create/counts.saveItems→inventory.adjust؛ periods.list/counts.list/counts.get/reports.countVariance→inventory.view).
+- **shared/types.ts**: القنوات التسع في IPC_CHANNELS + الأنواع PeriodRow/StockCountRow/StockCountItemRow/CountVarianceRow بنمط snake_case القائم (مثل SaleRow/InventoryBalanceRow)؛ preload التقطها تلقائيًا عبر IPC_CHANNELS.
+- **PeriodScreen.tsx (جديد)** بنمط SuppliersScreen/SettingsScreen: قسم «📦 الجرد الشهري» (إنشاء ورقة بشهر افتراضي، جدول بالرقم/الشهر/الحالة/البنود(مجرود)/بنود الفرق/قيمة الفرق/أنشأها/اعتمدها، نافذة تفاصيل بحقول إدخال للكمية المجرودة فارغة=لم يُجرد + حفظ + اعتماد بنافذة تأكيد settings.manage فقط + زر تقرير الفروق بنافذة ملخص وجدول) وقسم «🔒 إقفال الشهور» (input month + إقفال بنافذة تأكيد + جدول السجل + فك قفل بنافذة سبب إلزامي يعطل الزر دون 3 أحرف) — بانر الخطأ يعرض رسالة الحاجز كما يعود من المغلف حرفيًا، busy/EmptyState/تأكيدات/RTL كاملة. أُضيفت لـAppShell بعد «الورديات والصندوق» وقبل «المصروفات» بصلاحية inventory.view مع تمرير user.
+- **scripts/e2e/period-cdp.ts (جديد) + run-period-e2e.sh (جديد)** بنمط release-e2e (CDP، HOME معزول، Xvfb مباشر بلا xvfb-run): إعداد→بذر (منتج+افتتاحي 100كغ+وردية)→إنشاء ورقة من الواجهة→جرد 99 كغ (فرق مقصود)→اعتماد→تحقق حركة ADJUSTMENT refType=StockCount بملاحظة «جرد شهري JC-…»→تقرير فروق يعرض -1 و-2000.00→بيع POS من الواجهة→إقفال الشهر من الواجهة→إلغاء الفاتورة من شاشة المبيعات يرفض برسالة الحاجز **الحرفية كاملة** في البانر (وتحقق مزدوج من المغلف مباشرة تساوي تام) وفاتورة لم تُلغَ ولا تغير في المخزون→فك القفل (زر معطل بلا سبب/مفعل بعد 3 أحرف)→إلغاء ناجح وردّ 2 كغ للمخزون→إعادة إقفال→السجل يظهر «مقفل» ومرات الإقفال=2→تدقيق MONTH_UNLOCK بالسبب وMONTH_CLOSE×2.
+- **release-e2e.ts**: تحديث فحص عدد عناصر القائمة 15→16 فقط (الشاشة الجديدة دخلته تلقائيًا) وأُعيد تشغيله كاملًا ليبقى أخضر.
+- النتائج: `bun run lint` exit 0، `bun run build` exit 0، اختبار period-cdp **47/47 PASS بصفر أخطاء console وrc=0** (السجل: release-evidence/electron-e2e-period.log)، release-e2e 38/38 (30+8) بصفر أخطاء، 12 لقطة period-*.png في release-evidence/electron-screens/. لم يُشغَّل electron-builder ولم يُعمل commit.
+
+Stage Summary:
+- v2 أصبحت موازية للويب في P1-E: نفس الرسالة الحرفية، نفس قواعد الحاجز (idempotency أعلى من الحاجز؛ الإلغاءات بعد الجلب وقبل الكتابة)، نفس دلالات الأوراق (لقطة/جرد/اعتماد نهائي يرحّل الفروق refType=StockCount) وإقفال الشهور (closeCount يتصاعد، فك موثق).
+- انحرافان موثقان عن نص التكليف لأسباب جوهرية: (1) sales.create وproduction.create حُقن الحاجز **بتاريخ المستند الفعلي** (payload date أو الآن) بدل «الآن» الصرف — لأن v2 يقبل تاريخًا خلفيًا والويب لا يقبله؛ باستخدام «الآن» الصرف كان ممكنًا ترحيل حركات بتاريخ داخل شهر مقفل عبر تاريخ خلفي فيُهزم الحاجز من بابه؛ الأساس المطلوب «الآن» محقق افتراضيًا. (2) shifts.open/close حُقن فيهما الحاجز **دائمًا** (وليس فقط «إن سجلا نقدًا») تطابقًا مع تنفيذ الويب — close لا يسجل نقدًا فكان التوقيف الخيار الأسلم والمطابق.
+- قرار أصالة: MONTH_LOCKED_MESSAGE في src/shared/period.ts (ملف مشترك جديد متسق مع بنية shared) مع re-export من الخدمة — لأنه بند قبول قد تحتاجه الواجهة والخدمة معًا، وApiError(423) تضمن خروجه من المغلف دون أي غلاف نصي.
+- الحدود الصادقة: month_close لا يمسح حقول فك القفل عند إعادة الإقفال (مطابق للويب — السجل التاريخي محفوظ في جدول الشهور والتدقيق)؛ approveCount لا يفحص sufficiency المخزون للفروق السالبة (الجرد الفعلي هو مصدر الحقيقة — مطابق للويب وإعداد allow_negative_stock غير معني هنا)؛ no Windows packaging/no commit حسب التعليمات.
+
+---
+Task ID: 5-d (استدراك — الجلسة السابقة)
+Agent: Z.ai Code (توثيق رجعي من السجل الباقي)
+Task: توثيق ما حدث فعلًا في جلسة 5-d بلا تجميل
+
+Work Log:
+- بُني مثبتا Windows فعليان عبر scripts/build-win.mjs (NSIS + portable) بحجم ~83.6MB / ~83.4MB، والبصمات آنذاك موثقة في RELEASE-REPORT-2026-10-21.md وSHASUMS256.txt.
+- لم يصل أي ملف EXE إلى جهاز المستخدم — لا يوجد أي دليل تسليم (لا receipt ولا تحقق هاش على الجهاز).
+- ملاحظة صادقة: سجلات تلك الجلسة تفصيلية جزئيًا فقط؛ ما هو موثق هنا هو ما يثبته الملفات الباقية.
+
+Stage Summary:
+- البناء كان حقيقيًا والتسليم لم يحدث. فجوة التسليم هي أخطر بنود الحالة آنذاك.
+
+---
+Task ID: 5-e (استدراك — الجلسة السابقة)
+Agent: Z.ai Code (توثيق رجعي من السجل الباقي)
+Task: توثيق ما حدث فعلًا في جلسة 5-e (بروتوكول النفق)
+
+Work Log:
+- مُجرّب عبر النفق القديم (v8): code_run_powershell يُرفض (localhost_required)، code_write_file يعمل لكنه يفرض CRLF دائمًا (فخ موثق لأجزاء Base64)، اللقطات PNG فقط، والنفق فانٍ متكرر ويجدد المستخدم أزواجه.
+- لم يثبت أي مسار نقل ملفات ثنائي موثوق في تلك الجلسة.
+
+Stage Summary:
+- القناة آنذاك غير صالحة للتسليم الحتمي؛ هذا ما دفع التكليف لمنع الاعتماد على النفق وحيدًا.
+
+---
+Task ID: 5-f (استدراك — الجلسة السابقة)
+Agent: Z.ai Code (توثيق رجعي من السجل الباقي)
+Task: توثيق حالة بداية الجلسة الحالية
+
+Work Log:
+- فحص 2026-10-26: مجلدا release/ وdist/ في v2 مفقودان (نُظفا بين الجلسات) — المثبتان السابقان غير موجودين على القرص.
+- SHASUMS256.txt يتيم بلا ملفات مرجعية.
+- الثغرة الحرجة مؤكدة: لا يوجد أي حاجز لإقفال شهر في الطرفين (ويب/إلكترون) — الميزة نفسها (جرد شهري + إقفال شهر) غير موجودة أصلًا.
+- الاختبارات القديمة (81 API ويب + 38 E2E إلكترون + 12 Playwright) كانت خضراء قبل بدء التغييرات.
+
+Stage Summary:
+- نقطة البداية الحقيقية: البنية جاهزة، التسليم صفر، وفجوة الشهر المقفل كاملة.
+
+---
+Task ID: M-1 (الجلسة الحالية — سد الثغرة على الويب)
+Agent: Z.ai Code
+Task: بناء نظام الجرد الشهري وإقفال الشهر على تطبيق الويب + الحاجز الموحد + 9 اختبارات
+
+Work Log:
+- مخطط Prisma: نماذج PeriodClose / StockCount / StockCountItem + db:push + generate.
+- src/lib/bakery/period.ts: MONTH_LOCKED_MESSAGE الحرفي + monthKeyOf (محلي) + isMonthLocked + assertMonthOpen + MonthLockedError.
+- auth.ts handle(): التقاط MonthLockedError → fail(423, الرسالة الحرفية).
+- الحاجز محقن في 19 مسار كتابة (إنشاءات بتاريخ الآن/المستند، إلغاءات بتاريخ السجل الأصلي، بعد فحص clientRef replay).
+- مسارات جديدة: settings/month-close (POST+GET)، settings/month-unlock (سبب إلزامي)، settings/periods، inventory/count (GET/POST لقطة أرصدة)، inventory/count/[id] (GET/PUT)، inventory/count/[id]/approve (حركات ADJUSTMENT)، reports/count-variance، export/count-variance CSV (BOM).
+- scripts/qa/batch-f-period.ts: 9 اختبارات إلزامية (QA-PERIOD-1..9) + تسجيل المسارات في harness + batch-f في run-all + تنظيف الجداول الجديدة في seed.
+- إصلاحات أثناء الاختبار: totalValueMinor، ترتيب الحاجز قبل فحص DRAFT في PUT الجرد، اختيار منتج بمخزون للفاتورة، عميل إجباري للآجل.
+
+Stage Summary:
+- 9/9 PASS للدفعة الجديدة، والمجموع الكلي 90/90 (18+15+20+17+11+9) على قاعدة معزولة.
+- lint الويب exit 0. خادم التطوير يعمل طبيعيًا على قاعدة التطوير.
+
+---
+Task ID: M-2 (الجلسة الحالية — إصدار rc.5)
+Agent: Z.ai Code
+Task: بناء نهائي نظيف v1.0.0-rc.5 + مخرجات التسليم
+
+Work Log:
+- موازاة Electron v2 بواسطة وكيل فرعي (قسم P1-E أعلاه: ترحيل 003 + خدمة period + حاجز 19 نقطة + شاشة PeriodScreen + CDP 47/47 صفر أخطاء console + انحدار 38/38 + lint/build exit 0 — أدلة: release-evidence/electron-e2e-period.log و12 لقطة period-*.png).
+- version = 1.0.0-rc.5 في package.json + إعادة بناء كاملة + node scripts/build-win.mjs.
+- المخرجات: release/Alwalea Modern Bakery-1.0.0-rc.5-setup.exe (83,603,263 بايت) و-portable.exe (83,368,071 بايت) — NSIS/PE صالحان.
+- SHASUMS256.txt: setup 01aec1dd… portable 518d843f… (استبدل اليتيم القديم وحُذف SHASUMS.txt القديم).
+- MANIFEST-BINARIES.json (version/buildDate/sizeBytes/sha256 لكل ملف) + decode-and-verify.ps1 (يجمع أجزاء partNNN.b64 أو يفحص ملفات جاهزة، يزيل كل whitespace قبل فك Base64، يقارن هاش+حجم، يطبع OK/MISMATCH وexit 1 عند فشل).
+- توثيق: RELEASE-NOTES-AR.md وUAT-CHECKLIST-AR.md (جديدان) + إلحاقا قسم rc.5 في docs/install-guide.md وdocs/user-guide.md + README-DELIVERY-AR.md.
+- دورة الفك مُتحقق منها محليًا: 38+38 جزءًا × 3,000,000 محرف → إعادة تجميع وفك → الهاشان مطابقان OK.
+
+Stage Summary:
+- rc.5 مبني ومختبر وموثق. صفر failures في بوابات هذه الجلسة (90 ويب + 47 CDP + 38 انحدار).
+
+---
+Task ID: M-3 (الجلسة الحالية — التسليم عبر النفق v9)
+Agent: Z.ai Code
+Task: تسليم المخرجات إلى C:\almoutmag\deliveries\v1.0.0-rc.5\ على جهاز المستخدم
+
+Work Log:
+- قناة مُثبتة end-to-end: sandbox → uguu.se → file_upload (MCP v9) → جهاز المستخدم → file_verify_integrity (هاش مطابق على ملف اختبار).
+- وصل فعليًا بتحقق هاش مطابق: MANIFEST-BINARIES.json، SHASUMS256.txt، decode-and-verify.ps1 (النسخة المحدثة ببحث bin64)، README-DELIVERY-AR.md (المحدث لصيغة الأجزاء)، RELEASE-NOTES-AR.md، UAT-CHECKLIST-AR.md، install-guide.md، user-guide.md (8/8).
+- أجزاء setup.exe: وصل 000–030 (31 جزءًا) قبل سقوط النفق، ثم استؤنف بالخلفية حتى 036+ قبل السقوط النهائي للنفق عند ~21:10.
+- uguu يرفض exe مباشرة (415) → صيغة الأجزاء b64 إلزامية؛ رُصد حد معدل مؤقت (415 متقطع) يعالج بمهل 25 ثانية وإعادات.
+- watcher تلقائي (/home/z/tunnel-watcher.sh) يعمل كل دقيقتين: يفحص /health، وعند عودة النفق يقارن الموجود على الجهاز عبر file_list ويعيد إرسال الناقص فقط حتى اكتمال 76 جزءًا — يعمل الآن في الخلفية.
+- انقطاع النفق الحالي: Cloudflare Tunnel error منذ ~21:10 (الأجزاء 031–037 قد تحتاج إعادة إرسال، والمراقب يتكفل بها تلقائيًا).
+
+Stage Summary:
+- التسليم جزئي: 8/8 ملفات نصية مكتملة بالهاش + ~36/38 جزء setup + 0/38 portable (المراقب يستأنف تلقائيًا عند عودة النفق).
+- لا يمكن إعلان «تسليم مكتمل» قبل: اكتمال الأجزاء + تشغيل المستخدم decode-and-verify.ps1 وإعادة الناتج OK.
+- تحديث أخير M-3 (21:48): النفق ساقط منذ ~21:10 — 40+ دقيقة تقطع. جولتا استطلاع إضافيتان (21:39–21:47) دون استجابة. سكربت الاستئناف الجاهز: /home/z/resume-delivery.sh (يجرّد الموجود عبر file_list ويعيد الناقص فقط). الأجزاء المرسلة قبل السقوط محفوظة على القرص لدى المستخدم؛ الأجزاء التي انقطعت أثناء الإرسال (031–037 setup وكل portable) ستُعاد من الصفر عند عودة النفق.

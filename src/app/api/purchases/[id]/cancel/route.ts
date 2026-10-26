@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +20,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const purchase = await db.purchase.findUnique({ where: { id }, include: { items: true } })
     if (!purchase) return fail(404, 'فاتورة الشراء غير موجودة')
     if (purchase.status === 'CANCELLED') return fail(409, 'فاتورة الشراء ملغاة مسبقًا')
+
+    // حاجز الشهر المقفل: بتاريخ فاتورة الشراء الأصلية
+    await assertMonthOpen(purchase.date)
 
     const body = await req.json().catch(() => null)
     if (!body) return fail(400, 'بيانات غير صالحة')

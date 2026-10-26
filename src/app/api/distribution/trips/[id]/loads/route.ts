@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { fail, handle, int, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +49,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const trip = await tx.distributionTrip.findUnique({ where: { id } })
         if (!trip) throw new BizError(404, 'الجولة غير موجودة')
         if (trip.status !== 'OPEN') throw new BizError(409, 'لا يمكن التحميل: الجولة مسواة مسبقًا')
+        // حاجز الشهر المقفل: تحميل يولد حركات مخزون بتاريخ الآن
+        await assertMonthOpen(new Date())
 
         for (const l of loads) {
           const product = await tx.product.findUnique({ where: { id: l.productId } })

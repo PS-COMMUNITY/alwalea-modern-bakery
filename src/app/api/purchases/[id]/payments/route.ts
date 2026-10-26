@@ -4,6 +4,7 @@ import { fail, handle, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
 import { fromMinor } from '@/lib/bakery/money'
 import { PAY_METHODS, posInt } from '../../../_lib/bakery'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +22,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const purchase = await db.purchase.findUnique({ where: { id } })
     if (!purchase) return fail(404, 'فاتورة الشراء غير موجودة')
     if (purchase.status === 'CANCELLED') return fail(409, 'لا يمكن الدفع على فاتورة ملغاة')
+
+    // حاجز الشهر المقفل: دفعة بتاريخ الآن
+    await assertMonthOpen(new Date())
 
     const body = await req.json().catch(() => null)
     if (!body) return fail(400, 'بيانات غير صالحة')

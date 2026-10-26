@@ -1,0 +1,13 @@
+import { call, captureSession } from '../qa/harness'
+const l = await call('POST', '/api/auth/login', { body: { password: '1234' } })
+captureSession(l)
+// فك القفل أولًا (الشهر مقفل من آخر تشغيل للدفعة)
+const u = await call('POST', '/api/settings/month-unlock', { body: { month: `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`, reason: 'debug' } })
+console.log('unlock:', u.status, JSON.stringify(u.json).slice(0, 150))
+const prods = await call('GET', '/api/products')
+const p = (prods.json?.rows ?? prods.json?.items ?? []).find((x: any) => x.name === 'سكر')
+console.log('سكر product:', JSON.stringify(p).slice(0, 200))
+const mv = await call('GET', '/api/inventory/movements', { query: { productId: p.id } })
+console.log('سكر movements:', JSON.stringify((mv.json?.items ?? []).map((m: any) => ({ t: m.type, q: m.qtyMilli }))))
+const sale = await call('POST', '/api/sales', { body: { items: [{ productId: p.id, qtyMilli: 100 }], payments: [{ amountMinor: 1, method: 'CASH' }] } })
+console.log('sale:', sale.status, JSON.stringify(sale.json).slice(0, 200))

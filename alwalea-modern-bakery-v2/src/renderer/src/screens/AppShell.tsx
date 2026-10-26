@@ -16,6 +16,7 @@ import SalesScreen from './SalesScreen'
 import ProductionScreen from './ProductionScreen'
 import DistributionScreen from './DistributionScreen'
 import ShiftsScreen from './ShiftsScreen'
+import PeriodScreen from './PeriodScreen'
 import ExpensesScreen from './ExpensesScreen'
 import AuditScreen from './AuditScreen'
 import InventoryScreen from './InventoryScreen'
@@ -42,6 +43,7 @@ const NAV: NavDef[] = [
   { key: 'production', label: 'الإنتاج', icon: '🍞', perm: 'production.view' },
   { key: 'distribution', label: 'التوزيع', icon: '🛵', perm: 'distribution.view' },
   { key: 'shifts', label: 'الورديات والصندوق', icon: '💰', perm: 'shifts.view' },
+  { key: 'period', label: 'الجرد والإقفال', icon: '📦', perm: 'inventory.view' },
   { key: 'expenses', label: 'المصروفات', icon: '🧾', perm: 'expenses.view' },
   { key: 'audit', label: 'سجل التدقيق', icon: '🛡️', perm: 'audit.view' },
   { key: 'reports', label: 'التقارير', icon: '📊', perm: 'reports.financial' },
@@ -86,6 +88,8 @@ export default function AppShell(props: {
         return <DistributionScreen user={props.user} />
       case 'shifts':
         return <ShiftsScreen user={props.user} />
+      case 'period':
+        return <PeriodScreen user={props.user} />
       case 'expenses':
         return <ExpensesScreen user={props.user} />
       case 'audit':

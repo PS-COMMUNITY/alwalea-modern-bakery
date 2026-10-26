@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, int, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,6 +62,9 @@ export async function POST(req: NextRequest) {
       date = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s)
       if (isNaN(date.getTime())) return fail(400, 'تاريخ المصروف غير صالح')
     }
+
+    // حاجز الشهر المقفل: بتاريخ المصروف المطلوب أو الآن
+    await assertMonthOpen(date ?? new Date())
 
     const category = await db.expenseCategory.findUnique({ where: { id: categoryId } })
     if (!category) return fail(404, 'تصنيف المصروف غير موجود')

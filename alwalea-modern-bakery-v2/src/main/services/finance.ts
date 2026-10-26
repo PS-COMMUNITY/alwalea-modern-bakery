@@ -8,6 +8,7 @@ import {
   cashBalance,
   openShift
 } from './helpers'
+import { assertMonthOpen } from './period'
 
 // ---------- المصروفات ----------
 export function listExpenseCategories(ctx: SvcCtx, payload: Record<string, unknown>): unknown[] {
@@ -66,6 +67,8 @@ export function createExpense(ctx: SvcCtx, payload: Record<string, unknown>): Re
   return ctx.db.tx(() => {
     const cat = ctx.db.get('SELECT id FROM expense_categories WHERE id = ?', [categoryId])
     if (!cat) throw new ApiError('فئة المصروف غير موجودة', 404)
+    // حاجز الشهر المقفل: المصروف بتاريخه هو (الافتراضي الآن)
+    assertMonthOpen(ctx.db, date)
     ctx.db.run(
       `INSERT INTO expenses (date, category_id, amount_minor, note, status, user_id, created_at) VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
       [date, categoryId, amountMinor, note, ctx.user?.id ?? null, ctx.db.now()]
@@ -84,6 +87,8 @@ export function cancelExpense(ctx: SvcCtx, payload: Record<string, unknown>): { 
     const e = ctx.db.get<{ id: number; amount_minor: number; status: string; date: string }>('SELECT id, amount_minor, status, date FROM expenses WHERE id = ?', [id])
     if (!e) throw new ApiError('المصروف غير موجود', 404)
     if (e.status === 'CANCELLED') throw new ApiError('المصروف ملغى مسبقًا', 409)
+    // حاجز الشهر المقفل: بتاريخ المصروف الأصلي — بعد جلب السجل وقبل أي كتابة
+    assertMonthOpen(ctx.db, e.date)
     addCashMovement(ctx.db, {
       type: 'ADJUSTMENT',
       amountMinor: Number(e.amount_minor),
@@ -123,6 +128,8 @@ export function openShiftSvc(ctx: SvcCtx, payload: Record<string, unknown>): Rec
   const openingCash = payload.openingCashMinor === undefined || payload.openingCashMinor === null ? 0 : reqMinor(payload.openingCashMinor, 'نقدية الافتتاح')
   return ctx.db.tx(() => {
     if (openShift(ctx.db)) throw new ApiError('توجد وردية مفتوحة بالفعل — أغلقها أولًا', 409)
+    // حاجز الشهر المقفل: فتح وردية يسجل نقدية افتتاح بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     ctx.db.run(
       `INSERT INTO shifts (opened_at, opening_cash_minor, status, user_id) VALUES (?, ?, 'OPEN', ?)`,
       [ctx.db.now(), openingCash, ctx.user?.id ?? null]
@@ -142,6 +149,8 @@ export function closeShiftSvc(ctx: SvcCtx, payload: Record<string, unknown>): Re
   return ctx.db.tx(() => {
     const s = openShift(ctx.db)
     if (!s) throw new ApiError('لا توجد وردية مفتوحة', 409)
+    // حاجز الشهر المقفل: إغلاق الوردية يوثّق النقد بتاريخ الآن (مطابق للويب)
+    assertMonthOpen(ctx.db, new Date())
     const totals = shiftTotals(ctx, s.id)
     const expected = totals.expectedMinor
     const difference = counted - expected

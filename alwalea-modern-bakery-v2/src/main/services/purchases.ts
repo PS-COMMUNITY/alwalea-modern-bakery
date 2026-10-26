@@ -12,6 +12,7 @@ import {
   nextDocNo,
   currentShiftId
 } from './helpers'
+import { assertMonthOpen } from './period'
 
 interface PurchaseLine {
   productId: number
@@ -47,6 +48,8 @@ export function createPurchase(ctx: SvcCtx, payload: Record<string, unknown>): R
       const existing = db.get<{ id: number }>('SELECT id FROM purchases WHERE client_ref = ?', [clientRef])
       if (existing) return getPurchase(ctx, { id: Number(existing.id) })
     }
+    // حاجز الشهر المقفل: بتاريخ الفاتورة — بعد فحص clientRef وقبل المعالجة
+    assertMonthOpen(db, date)
     const supplier = db.get('SELECT id, name FROM suppliers WHERE id = ?', [supplierId])
     if (!supplier) throw new ApiError('المورد غير موجود', 404)
 
@@ -182,6 +185,7 @@ export function cancelPurchase(ctx: SvcCtx, payload: Record<string, unknown>): R
     const p = getPurchase(ctx, { id }) as {
       id: number
       invoice_no: string
+      date: string
       status: string
       total_minor: number
       paid_minor: number
@@ -189,6 +193,8 @@ export function cancelPurchase(ctx: SvcCtx, payload: Record<string, unknown>): R
       items: Array<{ product_id: number; qty_milli: number; unit_cost_minor: number }>
     }
     if (p.status === 'CANCELLED') throw new ApiError('فاتورة الشراء ملغاة مسبقًا', 409)
+    // حاجز الشهر المقفل: بتاريخ الفاتورة الأصلية — بعد جلب السجل وقبل أي كتابة
+    assertMonthOpen(ctx.db, p.date)
 
     // تحقق إمكانية الإرجاع (لا مخزون سالب عند الإلغاء)
     for (const item of p.items) {
@@ -237,6 +243,8 @@ export function paySupplierViaPurchase(ctx: SvcCtx, payload: Record<string, unkn
   return ctx.db.tx(() => {
     const s = ctx.db.get('SELECT id FROM suppliers WHERE id = ?', [supplierId])
     if (!s) throw new ApiError('المورد غير موجود', 404)
+    // حاجز الشهر المقفل: دفعة بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     addSupplierLedger(ctx.db, { supplierId, refType: 'PAYMENT', amountMinor: -amountMinor, note })
     addCashMovement(ctx.db, { type: 'SUPPLIER_PAYMENT', amountMinor: -amountMinor, refType: 'supplier', refId: supplierId, note: note ?? 'دفعة مورد' })
     ctx.audit('supplier.payment', 'supplier', supplierId, { amountMinor })

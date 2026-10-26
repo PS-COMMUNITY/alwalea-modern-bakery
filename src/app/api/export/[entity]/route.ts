@@ -6,7 +6,7 @@ import { fromMilli } from '@/lib/bakery/money'
 
 export const dynamic = 'force-dynamic'
 
-const ENTITIES: Record<string, { perm: Perm; label: string; fetch: () => Promise<Record<string, unknown>[]> }> = {
+const ENTITIES: Record<string, { perm: Perm; label: string; fetch: (countId?: string) => Promise<Record<string, unknown>[]> }> = {
   products: {
     perm: 'products.view',
     label: 'المنتجات',
@@ -97,6 +97,24 @@ const ENTITIES: Record<string, { perm: Perm; label: string; fetch: () => Promise
       }))
     },
   },
+  'count-variance': {
+    perm: 'inventory.view',
+    label: 'فروق الجرد الشهري',
+    fetch: async (countId?: string) => {
+      if (!countId) throw new Error('COUNT_ID_REQUIRED')
+      const c = await db.stockCount.findUnique({ where: { id: countId }, include: { items: { orderBy: { productName: 'asc' } } } })
+      if (!c) throw new Error('COUNT_NOT_FOUND')
+      return c.items.filter(i => i.countedQtyMilli !== null).map(i => {
+        const diff = i.countedQtyMilli! - i.systemQtyMilli
+        return {
+          'رقم الورقة': c.countNo, 'الشهر': c.month, 'المنتج': i.productName,
+          'الرصيد الدفتري': fromMilli(i.systemQtyMilli), 'المجرود': fromMilli(i.countedQtyMilli!),
+          'الفرق (كمية)': fromMilli(diff), 'تكلفة الوحدة': fromMilli(i.unitCostMinor),
+          'الفرق (قيمة)': fromMilli(diff * i.unitCostMinor), 'حالة الورقة': c.status,
+        }
+      })
+    },
+  },
 }
 
 function csvEscape(v: unknown): string {
@@ -113,7 +131,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enti
     const r = await requirePerm(req, conf.perm)
     if ('response' in r) return r.response
 
-    const rows = await conf.fetch()
+    const countId = req.nextUrl.searchParams.get('countId') ?? undefined
+    let rows: Record<string, unknown>[]
+    try {
+      rows = await conf.fetch(countId)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : ''
+      if (msg === 'COUNT_ID_REQUIRED') return fail(400, 'معرف ورقة الجرد (countId) مطلوب في الاستعلام')
+      if (msg === 'COUNT_NOT_FOUND') return fail(404, 'ورقة الجرد غير موجودة')
+      throw e
+    }
     const headers = rows.length > 0 ? Object.keys(rows[0]) : ['لا توجد بيانات']
     const lines = [headers.map(csvEscape).join(',')]
     for (const row of rows) lines.push(headers.map(h => csvEscape(row[h])).join(','))

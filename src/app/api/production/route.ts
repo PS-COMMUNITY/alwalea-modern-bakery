@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { fail, handle, int, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -92,6 +93,9 @@ export async function POST(req: NextRequest) {
       const existing = await db.productionBatch.findUnique({ where: { clientRef } })
       if (existing) return ok(existing)
     }
+
+    // حاجز الشهر المقفل: دفعة إنتاج جديدة بتاريخ الآن
+    await assertMonthOpen(new Date())
 
     try {
       const batch = await db.$transaction(async tx => {

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit, stockOf } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 import { posInt } from '../../_lib/bakery'
 import { fromMilli } from '@/lib/bakery/money'
 
@@ -28,6 +29,9 @@ export async function POST(req: NextRequest) {
 
     const product = await db.product.findUnique({ where: { id: productId } })
     if (!product) return fail(404, 'المنتج غير موجود')
+
+    // حاجز الشهر المقفل: إعدام مخزون بتاريخ الآن
+    await assertMonthOpen(new Date())
 
     const current = await stockOf(productId)
     if (product.trackStock && current - qty < 0) {

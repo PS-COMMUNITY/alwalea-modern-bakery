@@ -5,6 +5,7 @@
 import { ApiError, reqStr, optStr, reqInt, reqMilli, reqMinor, reqEnum, reqArr, obj } from '../validate'
 import type { InventoryBalanceRow, StockMovementRow } from '../../shared/types'
 import { SvcCtx, addStockMovement, assertStock, stockBalance } from './helpers'
+import { assertMonthOpen } from './period'
 
 const MOVEMENT_TYPES = ['OPENING', 'PURCHASE', 'SALE', 'SALE_RETURN', 'PURCHASE_RETURN', 'PRODUCTION_IN', 'PRODUCTION_OUT', 'WASTE', 'ADJUSTMENT', 'TRIP_OUT', 'TRIP_RETURN'] as const
 
@@ -84,6 +85,8 @@ export function opening(ctx: SvcCtx, payload: Record<string, unknown>): { done: 
     }
   })
   return ctx.db.tx(() => {
+    // حاجز الشهر المقفل: رصيد افتتاحي بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     let count = 0
     for (const it of items) {
       const p = ctx.db.get<{ id: number; name: string; track_stock: number }>('SELECT id, name, track_stock FROM products WHERE id = ?', [it.productId])
@@ -116,6 +119,8 @@ export function adjust(ctx: SvcCtx, payload: Record<string, unknown>): { product
   const countedMilli = reqInt(payload.countedQtyMilli, 'الكمية المجرودة', 0)
   const reason = reqStr(payload.reason, 'سبب الجرد', 300)
   return ctx.db.tx(() => {
+    // حاجز الشهر المقفل: جرد/تسوية مخزون بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     const p = ctx.db.get<{ id: number; name: string; track_stock: number }>('SELECT id, name, track_stock FROM products WHERE id = ?', [productId])
     if (!p) throw new ApiError('المنتج غير موجود', 404)
     if (countedMilli < 0) throw new ApiError('الكمية المجرودة لا يمكن أن تكون سالبة')
@@ -142,6 +147,8 @@ export function waste(ctx: SvcCtx, payload: Record<string, unknown>): { done: bo
   const qtyMilli = reqMilli(payload.qtyMilli, 'الكمية')
   const reason = reqStr(payload.reason, 'السبب', 300)
   return ctx.db.tx(() => {
+    // حاجز الشهر المقفل: إعدام مخزون بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     const p = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM products WHERE id = ?', [productId])
     if (!p) throw new ApiError('المنتج غير موجود', 404)
     assertStock(ctx.db, productId, -qtyMilli, p.name)

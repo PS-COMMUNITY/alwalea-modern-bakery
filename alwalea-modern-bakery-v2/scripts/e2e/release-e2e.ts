@@ -166,7 +166,7 @@ async function phase1(): Promise<void> {
 
   // S04: تنقل عبر كل الشاشات وفحص ظهورها
   const navLabels = await evaluate(`Array.from(document.querySelectorAll('.nav-item')).map(b => b.textContent.trim())`) as string[]
-  check('S04a القائمة الجانبية تحتوي 15 عنصرًا', navLabels.length === 15, `count=${navLabels.length}`)
+  check('S04a القائمة الجانبية تحتوي 16 عنصرًا', navLabels.length === 16, `count=${navLabels.length}`)
   let navFailures = 0
   for (const label of navLabels) {
     await clickNav(label.split(' ')[0].length > 0 ? label : label)

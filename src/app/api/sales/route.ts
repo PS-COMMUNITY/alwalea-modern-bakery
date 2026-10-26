@@ -5,6 +5,7 @@ import { audit, getSettings, customerDebtMinor } from '@/lib/bakery/core'
 import { hasPerm } from '@/lib/bakery/permissions'
 import { lineTotalMinor, percentOfBp, fromMinor, fromMilli } from '@/lib/bakery/money'
 import { PAY_METHODS, posInt, resolveRange, pagination, nextNumberTx, stockOfTx } from '../_lib/bakery'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,6 +69,9 @@ export async function POST(req: NextRequest) {
       const existing = await db.sale.findUnique({ where: { clientRef }, include: { items: true, payments: true } })
       if (existing) return ok(existing)
     }
+
+    // حاجز الشهر المقفل: فاتورة جديدة بتاريخ الآن
+    await assertMonthOpen(new Date())
 
     // ===== البنود =====
     if (!Array.isArray(body.items)) return fail(400, 'بنود الفاتورة مطلوبة')

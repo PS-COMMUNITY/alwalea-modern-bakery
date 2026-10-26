@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { fail, handle, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit, customerDebtMinor } from '@/lib/bakery/core'
 import { signedInt } from '../../../_lib/bakery'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +20,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params
     const customer = await db.customer.findUnique({ where: { id } })
     if (!customer) return fail(404, 'العميل غير موجود')
+
+    // حاجز الشهر المقفل: تسوية ذمة بتاريخ الآن
+    await assertMonthOpen(new Date())
 
     const body = await req.json().catch(() => null)
     if (!body) return fail(400, 'بيانات غير صالحة')

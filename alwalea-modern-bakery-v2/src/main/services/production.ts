@@ -5,6 +5,7 @@
 // =============================================================
 import { ApiError, reqStr, optStr, reqInt, reqMilli, reqDate, reqArr, obj } from '../validate'
 import { SvcCtx, addStockMovement, assertStock, stockBalance, nextDocNo } from './helpers'
+import { assertMonthOpen } from './period'
 
 interface RecipeItemInput {
   productId: number
@@ -119,6 +120,9 @@ export function createBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
       const existing = db.get<{ id: number }>('SELECT id FROM production_batches WHERE client_ref = ?', [clientRef])
       if (existing) return getBatch(ctx, { id: Number(existing.id) })
     }
+
+    // حاجز الشهر المقفل: دفعة إنتاج بتاريخها (الافتراضي الآن) — بعد فحص clientRef وقبل المعالجة
+    assertMonthOpen(db, date)
 
     const recipe = db.get<{ id: number; name: string; product_id: number }>('SELECT id, name, product_id FROM recipes WHERE id = ?', [recipeId])
     if (!recipe) throw new ApiError('الوصفة غير موجودة', 404)
@@ -254,12 +258,14 @@ export function cancelBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
   const id = reqInt(payload.id, 'المعرف', 1)
   const reason = reqStr(payload.reason, 'سبب الإلغاء', 300)
   return ctx.db.tx(() => {
-    const b = ctx.db.get<{ id: number; batch_no: string; status: string; recipe_id: number }>(
-      'SELECT id, batch_no, status, recipe_id FROM production_batches WHERE id = ?',
+    const b = ctx.db.get<{ id: number; batch_no: string; status: string; recipe_id: number; date: string }>(
+      'SELECT id, batch_no, status, recipe_id, date FROM production_batches WHERE id = ?',
       [id]
     )
     if (!b) throw new ApiError('دفعة الإنتاج غير موجودة', 404)
     if (b.status === 'CANCELLED') throw new ApiError('الدفعة ملغاة مسبقًا', 409)
+    // حاجز الشهر المقفل: بتاريخ الدفعة الأصلية — بعد جلب السجل وقبل أي كتابة
+    assertMonthOpen(ctx.db, b.date)
 
     const moves = ctx.db.query<{ product_id: number; qty_milli: number; type: string }>(
       `SELECT product_id, qty_milli, type FROM stock_movements

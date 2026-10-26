@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, ok, requirePerm, str } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +22,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const expense = await db.expense.findUnique({ where: { id }, include: { category: { select: { name: true } } } })
     if (!expense) return fail(404, 'المصروف غير موجود')
     if (expense.status !== 'COMPLETED') return fail(409, 'المصروف ملغى مسبقًا')
+
+    // حاجز الشهر المقفل: بتاريخ المصروف الأصلي
+    await assertMonthOpen(expense.date)
 
     const openShift = await db.shift.findFirst({ where: { status: 'OPEN' } })
 

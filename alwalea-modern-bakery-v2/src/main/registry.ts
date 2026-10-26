@@ -22,6 +22,7 @@ import * as production from './services/production'
 import * as dist from './services/distribution'
 import * as finance from './services/finance'
 import * as reports from './services/reports'
+import * as period from './services/period'
 import * as backup from './services/backup'
 
 type Handler = (ctx: SvcCtx, payload: Record<string, unknown>) => unknown
@@ -168,6 +169,17 @@ route('shifts.close', finance.closeShiftSvc, 'shifts.close')
 route('shifts.list', (ctx) => finance.listShifts(ctx), 'shifts.view')
 route('cash.list', finance.listCash, 'shifts.view')
 route('cash.record', finance.recordCash, 'settings.manage')
+
+// ---------- إقفال الشهور والجرد الشهري ----------
+route('periods.list', period.listPeriods, 'inventory.view')
+route('period.close', period.closeMonth, 'settings.manage')
+route('period.unlock', period.unlockMonth, 'settings.manage')
+route('counts.list', period.listCounts, 'inventory.view')
+route('counts.get', period.getCount, 'inventory.view')
+route('counts.create', period.createCount, 'inventory.adjust')
+route('counts.saveItems', period.saveCountItems, 'inventory.adjust')
+route('counts.approve', period.approveCount, 'settings.manage')
+route('reports.countVariance', period.countVariance, 'inventory.view')
 
 // ---------- تقارير ----------
 route('reports.dashboard', (ctx) => reports.dashboard(ctx))

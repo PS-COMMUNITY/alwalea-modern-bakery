@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { fail, handle, ok, requirePerm, str, int } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
+import { assertMonthOpen } from '@/lib/bakery/period'
 import { posInt } from '../../_lib/bakery'
 
 export const dynamic = 'force-dynamic'
@@ -21,6 +22,9 @@ export async function POST(req: NextRequest) {
 
     if (!Array.isArray(body.items)) return fail(400, 'بنود الرصيد الافتتاحي مطلوبة')
     if (body.items.length === 0) return fail(400, 'يجب إضافة بند واحد على الأقل')
+
+    // حاجز الشهر المقفل: رصيد افتتاحي بتاريخ الآن
+    await assertMonthOpen(new Date())
 
     // التحقق من المدخلات وجلب المنتجات
     const productIds: string[] = []

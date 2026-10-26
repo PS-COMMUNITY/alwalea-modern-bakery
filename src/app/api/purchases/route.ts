@@ -4,6 +4,7 @@ import { fail, handle, ok, requirePerm, str, int } from '@/lib/bakery/auth'
 import { audit } from '@/lib/bakery/core'
 import { lineTotalMinor, fromMinor } from '@/lib/bakery/money'
 import { PAY_METHODS, posInt, resolveRange, pagination, nextNumberTx } from '../_lib/bakery'
+import { assertMonthOpen } from '@/lib/bakery/period'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,6 +68,9 @@ export async function POST(req: NextRequest) {
       const existing = await db.purchase.findUnique({ where: { clientRef }, include: { items: true, payments: true } })
       if (existing) return ok(existing)
     }
+
+    // حاجز الشهر المقفل: فاتورة شراء جديدة بتاريخ الآن
+    await assertMonthOpen(new Date())
 
     // ===== المورد =====
     const supplierId = str(body.supplierId, 50)

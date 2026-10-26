@@ -18,6 +18,7 @@ import {
   getBoolSetting,
   nextDocNo
 } from './helpers'
+import { assertMonthOpen } from './period'
 
 // ---------- المندوبون والخطوط ----------
 export function listReps(ctx: SvcCtx, payload: Record<string, unknown>): unknown[] {
@@ -157,6 +158,8 @@ export function addLoad(ctx: SvcCtx, payload: Record<string, unknown>): Record<s
   return ctx.db.tx(() => {
     const trip = requireTrip(ctx, tripId)
     if (trip.status !== 'OPEN') throw new ApiError('لا يمكن التحميل إلا لجولة مفتوحة', 409)
+    // حاجز الشهر المقفل: تحميل جولة يخصم مخزون بتاريخ الآن
+    assertMonthOpen(ctx.db, new Date())
     addTripLoad(ctx, tripId, trip.trip_no, productId, qtyMilli, trip.date)
     ctx.audit('distribution.trip_load', 'trip', tripId, { productId, qtyMilli })
     return getTrip(ctx, { id: tripId })
@@ -410,6 +413,8 @@ export function settleTrip(ctx: SvcCtx, payload: Record<string, unknown>): Recor
     const trip = requireTrip(ctx, tripId)
     if (trip.status === 'SETTLED') throw new ApiError('الجولة مسواة مسبقًا — لا يمكن مضاعفة الترحيل', 409)
     if (trip.status !== 'OPEN') throw new ApiError('الجولة غير مفتوحة', 409)
+    // حاجز الشهر المقفل: التسوية ترحّل فواتير ونقدًا بتاريخ الآن
+    assertMonthOpen(db, new Date())
 
     const sales = db.query<{ id: number; product_id: number; qty_milli: number; unit_price_minor: number; payment_type: string; customer_id: number | null }>(
       'SELECT id, product_id, qty_milli, unit_price_minor, payment_type, customer_id FROM trip_sales WHERE trip_id = ? ORDER BY id',

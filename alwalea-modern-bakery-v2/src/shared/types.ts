@@ -85,6 +85,15 @@ export const IPC_CHANNELS = [
   'shifts.list',
   'cash.list',
   'cash.record',
+  'periods.list',
+  'period.close',
+  'period.unlock',
+  'counts.list',
+  'counts.get',
+  'counts.create',
+  'counts.saveItems',
+  'counts.approve',
+  'reports.countVariance',
   'reports.dashboard',
   'reports.sales',
   'reports.collections',
@@ -265,6 +274,55 @@ export interface DashboardReport {
   lowStockCount: number
   openShift: { id: number; opened_at: string; opening_cash_minor: number } | null
   recentSales: SaleRow[]
+}
+
+// ---------- إقفال الشهور والجرد الشهري (P1-E) ----------
+export interface PeriodRow {
+  id: number
+  month: string // YYYY-MM
+  locked: boolean
+  closed_at: string
+  closed_by_name: string | null
+  unlocked_at: string | null
+  unlocked_by_name: string | null
+  unlock_reason: string | null
+  close_count: number
+}
+
+export interface StockCountRow {
+  id: number
+  count_no: string // JC-YYYYMM-0001
+  month: string // YYYY-MM
+  status: string // DRAFT | APPROVED
+  note: string | null
+  user_name: string | null
+  created_at: string
+  approved_at: string | null
+  approved_by_name: string | null
+  items_total: number
+  items_counted: number
+  diff_items: number
+  diff_value_minor: number
+}
+
+export interface StockCountItemRow {
+  id: number
+  product_id: number
+  product_name: string
+  system_qty_milli: number
+  counted_qty_milli: number | null
+  diff_milli: number | null
+  unit_cost_minor: number
+}
+
+export interface CountVarianceRow {
+  product_id: number
+  product_name: string
+  system_qty_milli: number
+  counted_qty_milli: number
+  diff_milli: number
+  unit_cost_minor: number
+  diff_value_minor: number
 }
 
 // ---------- أدوار وصلاحيات (انظر permissions.ts للتفاصيل) ----------
