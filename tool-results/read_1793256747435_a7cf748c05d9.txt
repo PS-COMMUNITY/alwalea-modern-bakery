@@ -1,0 +1,995 @@
+     1→// =============================================================
+     2→// مخبز الولاء الحديث — شاشة التوزيع: مندوبون وخطوط وجولات
+     3→// القنوات: distribution.reps.* + distribution.routes.* + distribution.trips.*
+     4→// الجولة المفتوحة: تحميل/بيع/مرتجعات — التسوية ترحل الفواتير والنقد والآجل
+     5→// =============================================================
+     6→import { useCallback, useEffect, useState } from 'react'
+     7→import type { ReactNode } from 'react'
+     8→import type { SessionUser } from '../../../shared/types'
+     9→import { call, money, qty as fmtQ, fmtDateTime } from '../api'
+    10→import { toMilli, toMinor } from '../../../shared/money'
+    11→import { Field, Modal, Banner, Badge, EmptyState, statusBadge } from '../components/ui'
+    12→
+    13→interface RepRow {
+    14→  id: number
+    15→  name: string
+    16→  phone: string | null
+    17→  active: number
+    18→}
+    19→
+    20→interface RouteRow {
+    21→  id: number
+    22→  name: string
+    23→  note: string | null
+    24→  active: number
+    25→}
+    26→
+    27→interface TripListRow {
+    28→  id: number
+    29→  trip_no: string
+    30→  date: string
+    31→  status: string
+    32→  rep_id: number
+    33→  rep_name: string
+    34→  route_id: number | null
+    35→  route_name: string | null
+    36→  loaded_milli: number
+    37→  settled_at: string | null
+    38→  created_at: string
+    39→}
+    40→
+    41→interface TripDetail {
+    42→  id: number
+    43→  trip_no: string
+    44→  rep_id: number
+    45→  route_id: number | null
+    46→  date: string
+    47→  status: string
+    48→  notes: string | null
+    49→  settle_notes: string | null
+    50→  created_at: string
+    51→  settled_at: string | null
+    52→  rep_name: string | null
+    53→  route_name: string | null
+    54→  loads: Array<{ product_id: number; product_name: string; qty_milli: number }>
+    55→  sales: Array<{
+    56→    id: number
+    57→    product_id: number
+    58→    product_name: string
+    59→    qty_milli: number
+    60→    unit_price_minor: number
+    61→    payment_type: string
+    62→    customer_id: number | null
+    63→    customer_name: string | null
+    64→    sale_id: number | null
+    65→    created_at: string
+    66→  }>
+    67→  returns: Array<{ id: number; product_id: number; product_name: string; qty_milli: number; condition: string; note: string | null }>
+    68→  vanStock: Array<{ productId: number; loaded: number; sold: number; returned: number; onVan: number }>
+    69→  cashTotalMinor: number
+    70→  creditTotalMinor: number
+    71→}
+    72→
+    73→interface ProductLite {
+    74→  id: number
+    75→  name: string
+    76→  base_unit: string
+    77→  price_minor: number
+    78→  track_stock: number
+    79→  active: number
+    80→}
+    81→
+    82→interface CustomerLite {
+    83→  id: number
+    84→  name: string
+    85→  active: number
+    86→}
+    87→
+    88→/** تاريخ اليوم بصيغة YYYY-MM-DD */
+    89→function today(): string {
+    90→  const d = new Date()
+    91→  const pad = (n: number): string => String(n).padStart(2, '0')
+    92→  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    93→}
+    94→
+    95→export default function DistributionScreen(props: { user: SessionUser }): ReactNode {
+    96→  const [reps, setReps] = useState<RepRow[] | null>(null)
+    97→  const [routes, setRoutes] = useState<RouteRow[] | null>(null)
+    98→  const [trips, setTrips] = useState<TripListRow[] | null>(null)
+    99→  const [products, setProducts] = useState<ProductLite[]>([])
+   100→  const [customers, setCustomers] = useState<CustomerLite[]>([])
+   101→  const [statusFilter, setStatusFilter] = useState('')
+   102→  const [error, setError] = useState('')
+   103→  const [notice, setNotice] = useState('')
+   104→  const [busy, setBusy] = useState(false)
+   105→
+   106→  // نوافذ المندوبين والخطوط والجولات
+   107→  const [repForm, setRepForm] = useState<{ name: string; phone: string } | null>(null)
+   108→  const [routeForm, setRouteForm] = useState<{ name: string; note: string } | null>(null)
+   109→  const [tripForm, setTripForm] = useState<{ repId: string; routeId: string; date: string; notes: string } | null>(null)
+   110→
+   111→  // تفاصيل الجولة + النماذج داخلها
+   112→  const [detail, setDetail] = useState<TripDetail | null>(null)
+   113→  const [loadForm, setLoadForm] = useState<{ productId: string; qty: string }>({ productId: '', qty: '' })
+   114→  const [saleForm, setSaleForm] = useState<{ productId: string; qty: string; price: string; payType: 'CASH' | 'CREDIT'; customerId: string }>({
+   115→    productId: '',
+   116→    qty: '',
+   117→    price: '',
+   118→    payType: 'CASH',
+   119→    customerId: ''
+   120→  })
+   121→  const [returnForm, setReturnForm] = useState<{ productId: string; qty: string; condition: 'GOOD' | 'DAMAGED'; note: string }>({
+   122→    productId: '',
+   123→    qty: '',
+   124→    condition: 'GOOD',
+   125→    note: ''
+   126→  })
+   127→
+   128→  // التسوية والإلغاء
+   129→  const [settleFor, setSettleFor] = useState<TripDetail | null>(null)
+   130→  const [settleCounted, setSettleCounted] = useState('')
+   131→  const [settleNotes, setSettleNotes] = useState('')
+   132→  const [cancelFor, setCancelFor] = useState<TripListRow | null>(null)
+   133→  const [cancelReason, setCancelReason] = useState('')
+   134→
+   135→  const canManage = props.user.perms.includes('distribution.manage')
+   136→
+   137→  const load = useCallback(async (): Promise<void> => {
+   138→    setError('')
+   139→    try {
+   140→      const tripsPayload: Record<string, unknown> = {}
+   141→      if (statusFilter) tripsPayload.status = statusFilter
+   142→      const [r, rt, t, p, c] = await Promise.all([
+   143→        call<RepRow[]>('distribution.reps.list', { includeInactive: true }),
+   144→        call<RouteRow[]>('distribution.routes.list', { includeInactive: true }),
+   145→        call<TripListRow[]>('distribution.trips.list', tripsPayload),
+   146→        call<ProductLite[]>('products.list', { includeInactive: true }),
+   147→        call<CustomerLite[]>('customers.list', { includeInactive: true })
+   148→      ])
+   149→      setReps(r)
+   150→      setRoutes(rt)
+   151→      setTrips(t)
+   152→      setProducts(p)
+   153→      setCustomers(c)
+   154→    } catch (e) {
+   155→      setError(e instanceof Error ? e.message : String(e))
+   156→    }
+   157→  }, [statusFilter])
+   158→
+   159→  useEffect(() => {
+   160→    void load()
+   161→  }, [load])
+   162→
+   163→  const openDetail = useCallback(async (id: number): Promise<void> => {
+   164→    setError('')
+   165→    try {
+   166→      const d = await call<TripDetail>('distribution.trips.get', { id })
+   167→      setDetail(d)
+   168→      setLoadForm({ productId: '', qty: '' })
+   169→      setSaleForm({ productId: '', qty: '', price: '', payType: 'CASH', customerId: '' })
+   170→      setReturnForm({ productId: '', qty: '', condition: 'GOOD', note: '' })
+   171→    } catch (e) {
+   172→      setError(e instanceof Error ? e.message : String(e))
+   173→    }
+   174→  }, [])
+   175→
+   176→  const refreshDetail = async (id: number): Promise<void> => {
+   177→    const d = await call<TripDetail>('distribution.trips.get', { id })
+   178→    setDetail(d)
+   179→  }
+   180→
+   181→  // ---------- مندوب / خط / جولة ----------
+   182→  const saveRep = async (): Promise<void> => {
+   183→    if (!repForm) return
+   184→    if (!repForm.name.trim()) {
+   185→      setError('اسم المندوب مطلوب')
+   186→      return
+   187→    }
+   188→    setBusy(true)
+   189→    setError('')
+   190→    try {
+   191→      await call('distribution.reps.create', { name: repForm.name.trim(), phone: repForm.phone.trim() || null })
+   192→      setRepForm(null)
+   193→      setNotice('تمت إضافة المندوب')
+   194→      await load()
+   195→    } catch (e) {
+   196→      setError(e instanceof Error ? e.message : String(e))
+   197→    } finally {
+   198→      setBusy(false)
+   199→    }
+   200→  }
+   201→
+   202→  const saveRoute = async (): Promise<void> => {
+   203→    if (!routeForm) return
+   204→    if (!routeForm.name.trim()) {
+   205→      setError('اسم الخط مطلوب')
+   206→      return
+   207→    }
+   208→    setBusy(true)
+   209→    setError('')
+   210→    try {
+   211→      await call('distribution.routes.create', { name: routeForm.name.trim(), note: routeForm.note.trim() || null })
+   212→      setRouteForm(null)
+   213→      setNotice('تمت إضافة الخط')
+   214→      await load()
+   215→    } catch (e) {
+   216→      setError(e instanceof Error ? e.message : String(e))
+   217→    } finally {
+   218→      setBusy(false)
+   219→    }
+   220→  }
+   221→
+   222→  const saveTrip = async (): Promise<void> => {
+   223→    if (!tripForm) return
+   224→    setError('')
+   225→    const repId = Number(tripForm.repId)
+   226→    if (!repId) {
+   227→      setError('اختر المندوب')
+   228→      return
+   229→    }
+   230→    setBusy(true)
+   231→    try {
+   232→      const payload: Record<string, unknown> = { repId, notes: tripForm.notes.trim() || null }
+   233→      if (tripForm.routeId) payload.routeId = Number(tripForm.routeId)
+   234→      if (tripForm.date) payload.date = tripForm.date
+   235→      const res = await call<TripDetail>('distribution.trips.create', payload)
+   236→      setTripForm(null)
+   237→      setNotice(`تم فتح الجولة ${res.trip_no} — حمّل المنتجات ثم سجّل البيع والمرتجعات`)
+   238→      await load()
+   239→      await openDetail(res.id)
+   240→    } catch (e) {
+   241→      setError(e instanceof Error ? e.message : String(e))
+   242→    } finally {
+   243→      setBusy(false)
+   244→    }
+   245→  }
+   246→
+   247→  // ---------- عمليات داخل الجولة ----------
+   248→  const submitLoad = async (): Promise<void> => {
+   249→    if (!detail) return
+   250→    setError('')
+   251→    const productId = Number(loadForm.productId)
+   252→    const qtyMilli = toMilli(loadForm.qty)
+   253→    if (!productId) {
+   254→      setError('اختر المنتج للتحميل')
+   255→      return
+   256→    }
+   257→    if (qtyMilli === null || qtyMilli <= 0) {
+   258→      setError('كمية التحميل يجب أن تكون أكبر من صفر')
+   259→      return
+   260→    }
+   261→    setBusy(true)
+   262→    try {
+   263→      await call('distribution.trips.load', { tripId: detail.id, productId, qtyMilli })
+   264→      setLoadForm({ productId: '', qty: '' })
+   265→      setNotice('تم تحميل المنتج على عربة الجولة')
+   266→      await refreshDetail(detail.id)
+   267→      await load()
+   268→    } catch (e) {
+   269→      setError(e instanceof Error ? e.message : String(e))
+   270→    } finally {
+   271→      setBusy(false)
+   272→    }
+   273→  }
+   274→
+   275→  const submitSale = async (): Promise<void> => {
+   276→    if (!detail) return
+   277→    setError('')
+   278→    const productId = Number(saleForm.productId)
+   279→    const qtyMilli = toMilli(saleForm.qty)
+   280→    const unitPriceMinor = toMinor(saleForm.price)
+   281→    if (!productId) {
+   282→      setError('اختر المنتج المبيع')
+   283→      return
+   284→    }
+   285→    if (qtyMilli === null || qtyMilli <= 0) {
+   286→      setError('كمية البيع يجب أن تكون أكبر من صفر')
+   287→      return
+   288→    }
+   289→    if (unitPriceMinor === null) {
+   290→      setError('سعر الوحدة غير صحيح')
+   291→      return
+   292→    }
+   293→    if (saleForm.payType === 'CREDIT' && !saleForm.customerId) {
+   294→      setError('البيع الآجل يتطلب تحديد العميل')
+   295→      return
+   296→    }
+   297→    setBusy(true)
+   298→    try {
+   299→      await call('distribution.trips.sale', {
+   300→        tripId: detail.id,
+   301→        items: [
+   302→          {
+   303→            productId,
+   304→            qtyMilli,
+   305→            unitPriceMinor,
+   306→            paymentType: saleForm.payType,
+   307→            customerId: saleForm.payType === 'CREDIT' ? Number(saleForm.customerId) : null
+   308→          }
+   309→        ]
+   310→      })
+   311→      setSaleForm({ productId: '', qty: '', price: '', payType: saleForm.payType, customerId: '' })
+   312→      setNotice('سُجّل البيع على الجولة — يُرحّل عند التسوية')
+   313→      await refreshDetail(detail.id)
+   314→      await load()
+   315→    } catch (e) {
+   316→      setError(e instanceof Error ? e.message : String(e))
+   317→    } finally {
+   318→      setBusy(false)
+   319→    }
+   320→  }
+   321→
+   322→  const submitReturn = async (): Promise<void> => {
+   323→    if (!detail) return
+   324→    setError('')
+   325→    const productId = Number(returnForm.productId)
+   326→    const qtyMilli = toMilli(returnForm.qty)
+   327→    if (!productId) {
+   328→      setError('اختر منتج المرتجع')
+   329→      return
+   330→    }
+   331→    if (qtyMilli === null || qtyMilli <= 0) {
+   332→      setError('كمية المرتجع يجب أن تكون أكبر من صفر')
+   333→      return
+   334→    }
+   335→    setBusy(true)
+   336→    try {
+   337→      await call('distribution.trips.return', {
+   338→        tripId: detail.id,
+   339→        items: [{ productId, qtyMilli, condition: returnForm.condition, note: returnForm.note.trim() || null }]
+   340→      })
+   341→      setReturnForm({ productId: '', qty: '', condition: 'GOOD', note: '' })
+   342→      setNotice(returnForm.condition === 'GOOD' ? 'أُعيدت الكمية للمخزون (سليمة)' : 'وُثق المرتجع التالف كهالك بعد إعادته للمخزون')
+   343→      await refreshDetail(detail.id)
+   344→      await load()
+   345→    } catch (e) {
+   346→      setError(e instanceof Error ? e.message : String(e))
+   347→    } finally {
+   348→      setBusy(false)
+   349→    }
+   350→  }
+   351→
+   352→  const submitSettle = async (): Promise<void> => {
+   353→    if (!settleFor) return
+   354→    setError('')
+   355→    const countedMinor = settleCounted.trim() === '' ? null : toMinor(settleCounted)
+   356→    if (settleCounted.trim() !== '' && countedMinor === null) {
+   357→      setError('النقد المجرود غير صحيح')
+   358→      return
+   359→    }
+   360→    setBusy(true)
+   361→    try {
+   362→      const payload: Record<string, unknown> = { tripId: settleFor.id }
+   363→      if (countedMinor !== null) payload.countedCashMinor = countedMinor
+   364→      if (settleNotes.trim()) payload.notes = settleNotes.trim()
+   365→      await call('distribution.trips.settle', payload)
+   366→      const no = settleFor.trip_no
+   367→      setSettleFor(null)
+   368→      setSettleCounted('')
+   369→      setSettleNotes('')
+   370→      setNotice(`سُوّت الجولة ${no}: رُحّلت فواتير البيع ودخل النقد للصندوق وقُيّد الآجل على دفتر العملاء`)
+   371→      await load()
+   372→      await openDetail(settleFor.id)
+   373→    } catch (e) {
+   374→      setError(e instanceof Error ? e.message : String(e))
+   375→    } finally {
+   376→      setBusy(false)
+   377→    }
+   378→  }
+   379→
+   380→  const submitCancel = async (): Promise<void> => {
+   381→    if (!cancelFor) return
+   382→    if (cancelReason.trim().length < 3) {
+   383→      setError('اكتب سبب الإلغاء (3 أحرف على الأقل)')
+   384→      return
+   385→    }
+   386→    setBusy(true)
+   387→    setError('')
+   388→    try {
+   389→      await call('distribution.trips.cancel', { id: cancelFor.id, reason: cancelReason.trim() })
+   390→      setCancelFor(null)
+   391→      setCancelReason('')
+   392→      setNotice('أُلغيت الجولة ورُد تحميلها للمخزون')
+   393→      await load()
+   394→    } catch (e) {
+   395→      setError(e instanceof Error ? e.message : String(e))
+   396→    } finally {
+   397→      setBusy(false)
+   398→    }
+   399→  }
+   400→
+   401→  const onSaleProductChange = (pid: string): void => {
+   402→    const p = products.find((x) => String(x.id) === pid)
+   403→    setSaleForm((f) => ({ ...f, productId: pid, price: p ? (p.price_minor / 100).toFixed(2) : f.price }))
+   404→  }
+   405→
+   406→  return (
+   407→    <div>
+   408→      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+   409→        <h1 style={{ marginRight: 'auto' }}>التوزيع (الجولات)</h1>
+   410→        {canManage ? (
+   411→          <>
+   412→            <button className="btn ghost" onClick={() => setRepForm({ name: '', phone: '' })}>
+   413→              ＋ مندوب
+   414→            </button>
+   415→            <button className="btn ghost" onClick={() => setRouteForm({ name: '', note: '' })}>
+   416→              ＋ خط توزيع
+   417→            </button>
+   418→            <button className="btn primary" onClick={() => setTripForm({ repId: '', routeId: '', date: today(), notes: '' })}>
+   419→              ＋ جولة جديدة
+   420→            </button>
+   421→          </>
+   422→        ) : null}
+   423→      </div>
+   424→
+   425→      {error ? <Banner kind="error" text={error} /> : null}
+   426→      {notice ? <Banner kind="ok" text={notice} /> : null}
+   427→
+   428→      {/* ================= المندوبون والخطوط ================= */}
+   429→      <div className="grid-cards" style={{ marginBottom: 22, gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+   430→        <div className="card" style={{ padding: 14 }}>
+   431→          <h3>🛵 المندوبون</h3>
+   432→          {reps === null ? (
+   433→            <EmptyState icon="⏳" text="جارٍ التحميل…" />
+   434→          ) : reps.length === 0 ? (
+   435→            <EmptyState icon="🛵" text="لا مندوبين بعد." />
+   436→          ) : (
+   437→            <table className="data">
+   438→              <thead>
+   439→                <tr>
+   440→                  <th>الاسم</th>
+   441→                  <th>الهاتف</th>
+   442→                  <th>الحالة</th>
+   443→                </tr>
+   444→              </thead>
+   445→              <tbody>
+   446→                {reps.map((r) => (
+   447→                  <tr key={r.id}>
+   448→                    <td>{r.name}</td>
+   449→                    <td dir="ltr">{r.phone ?? '—'}</td>
+   450→                    <td>{r.active === 1 ? <Badge kind="ok" text="نشط" /> : <Badge kind="muted" text="معطّل" />}</td>
+   451→                  </tr>
+   452→                ))}
+   453→              </tbody>
+   454→            </table>
+   455→          )}
+   456→        </div>
+   457→        <div className="card" style={{ padding: 14 }}>
+   458→          <h3>🗺️ خطوط التوزيع</h3>
+   459→          {routes === null ? (
+   460→            <EmptyState icon="⏳" text="جارٍ التحميل…" />
+   461→          ) : routes.length === 0 ? (
+   462→            <EmptyState icon="🗺️" text="لا خطوط بعد." />
+   463→          ) : (
+   464→            <table className="data">
+   465→              <thead>
+   466→                <tr>
+   467→                  <th>الخط</th>
+   468→                  <th>ملاحظة</th>
+   469→                  <th>الحالة</th>
+   470→                </tr>
+   471→              </thead>
+   472→              <tbody>
+   473→                {routes.map((r) => (
+   474→                  <tr key={r.id}>
+   475→                    <td>{r.name}</td>
+   476→                    <td>{r.note ?? '—'}</td>
+   477→                    <td>{r.active === 1 ? <Badge kind="ok" text="نشط" /> : <Badge kind="muted" text="معطّل" />}</td>
+   478→                  </tr>
+   479→                ))}
+   480→              </tbody>
+   481→            </table>
+   482→          )}
+   483→        </div>
+   484→      </div>
+   485→
+   486→      {/* ================= الجولات ================= */}
+   487→      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+   488→        <h2 style={{ marginRight: 'auto' }}>🚚 الجولات</h2>
+   489→        <div className="field" style={{ marginBottom: 0 }}>
+   490→          <label>الحالة</label>
+   491→          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+   492→            <option value="">الكل</option>
+   493→            <option value="OPEN">مفتوحة</option>
+   494→            <option value="SETTLED">مسواة</option>
+   495→            <option value="CANCELLED">ملغاة</option>
+   496→          </select>
+   497→        </div>
+   498→      </div>
+   499→      {trips === null ? (
+   500→        <EmptyState icon="⏳" text="جارٍ التحميل…" />
+   501→      ) : trips.length === 0 ? (
+   502→        <EmptyState icon="🚚" text="لا جولات مطابقة — افتح جولة: اختر مندوبًا وحمّل المنتجات على العربة." />
+   503→      ) : (
+   504→        <table className="data">
+   505→          <thead>
+   506→            <tr>
+   507→              <th>الجولة</th>
+   508→              <th>التاريخ</th>
+   509→              <th>المندوب</th>
+   510→              <th>الخط</th>
+   511→              <th className="num">المحمّل</th>
+   512→              <th>الحالة</th>
+   513→              <th>سُوّت في</th>
+   514→              <th></th>
+   515→            </tr>
+   516→          </thead>
+   517→          <tbody>
+   518→            {trips.map((t) => (
+   519→              <tr key={t.id}>
+   520→                <td>
+   521→                  <strong>{t.trip_no}</strong>
+   522→                </td>
+   523→                <td dir="ltr">{t.date}</td>
+   524→                <td>{t.rep_name}</td>
+   525→                <td>{t.route_name ?? '—'}</td>
+   526→                <td className="num">{fmtQ(t.loaded_milli)}</td>
+   527→                <td>{statusBadge(t.status)}</td>
+   528→                <td>{t.settled_at ? fmtDateTime(t.settled_at) : '—'}</td>
+   529→                <td style={{ whiteSpace: 'nowrap' }}>
+   530→                  <button className="btn ghost small" onClick={() => void openDetail(t.id)}>
+   531→                    تفاصيل
+   532→                  </button>{' '}
+   533→                  {canManage && t.status === 'OPEN' ? (
+   534→                    <button
+   535→                      className="btn danger small"
+   536→                      disabled={busy}
+   537→                      onClick={() => {
+   538→                        setCancelReason('')
+   539→                        setCancelFor(t)
+   540→                      }}
+   541→                    >
+   542→                      إلغاء
+   543→                    </button>
+   544→                  ) : null}
+   545→                </td>
+   546→              </tr>
+   547→            ))}
+   548→          </tbody>
+   549→        </table>
+   550→      )}
+   551→
+   552→      {/* ================= نافذة مندوب ================= */}
+   553→      {repForm ? (
+   554→        <Modal title="مندوب جديد" onClose={() => setRepForm(null)}>
+   555→          <Field label="اسم المندوب *">
+   556→            <input value={repForm.name} onChange={(e) => setRepForm({ ...repForm, name: e.target.value })} autoFocus />
+   557→          </Field>
+   558→          <Field label="الهاتف">
+   559→            <input dir="ltr" value={repForm.phone} onChange={(e) => setRepForm({ ...repForm, phone: e.target.value })} />
+   560→          </Field>
+   561→          <div style={{ display: 'flex', gap: 10 }}>
+   562→            <button className="btn primary" disabled={busy} onClick={() => void saveRep()}>
+   563→              {busy ? 'جارٍ الحفظ…' : 'حفظ'}
+   564→            </button>
+   565→            <button className="btn ghost" onClick={() => setRepForm(null)}>
+   566→              إلغاء
+   567→            </button>
+   568→          </div>
+   569→        </Modal>
+   570→      ) : null}
+   571→
+   572→      {/* ================= نافذة خط ================= */}
+   573→      {routeForm ? (
+   574→        <Modal title="خط توزيع جديد" onClose={() => setRouteForm(null)}>
+   575→          <Field label="اسم الخط *">
+   576→            <input value={routeForm.name} onChange={(e) => setRouteForm({ ...routeForm, name: e.target.value })} autoFocus />
+   577→          </Field>
+   578→          <Field label="ملاحظة">
+   579→            <input value={routeForm.note} onChange={(e) => setRouteForm({ ...routeForm, note: e.target.value })} placeholder="اختياري — الأحياء أو المنطقة" />
+   580→          </Field>
+   581→          <div style={{ display: 'flex', gap: 10 }}>
+   582→            <button className="btn primary" disabled={busy} onClick={() => void saveRoute()}>
+   583→              {busy ? 'جارٍ الحفظ…' : 'حفظ'}
+   584→            </button>
+   585→            <button className="btn ghost" onClick={() => setRouteForm(null)}>
+   586→              إلغاء
+   587→            </button>
+   588→          </div>
+   589→        </Modal>
+   590→      ) : null}
+   591→
+   592→      {/* ================= نافذة جولة جديدة ================= */}
+   593→      {tripForm ? (
+   594→        <Modal title="جولة توزيع جديدة" onClose={() => setTripForm(null)}>
+   595→          <div className="form-row">
+   596→            <Field label="المندوب *">
+   597→              <select value={tripForm.repId} onChange={(e) => setTripForm({ ...tripForm, repId: e.target.value })} autoFocus>
+   598→                <option value="">— اختر —</option>
+   599→                {(reps ?? [])
+   600→                  .filter((r) => r.active === 1)
+   601→                  .map((r) => (
+   602→                    <option key={r.id} value={String(r.id)}>
+   603→                      {r.name}
+   604→                    </option>
+   605→                  ))}
+   606→              </select>
+   607→            </Field>
+   608→            <Field label="الخط">
+   609→              <select value={tripForm.routeId} onChange={(e) => setTripForm({ ...tripForm, routeId: e.target.value })}>
+   610→                <option value="">— بلا خط —</option>
+   611→                {(routes ?? [])
+   612→                  .filter((r) => r.active === 1)
+   613→                  .map((r) => (
+   614→                    <option key={r.id} value={String(r.id)}>
+   615→                      {r.name}
+   616→                    </option>
+   617→                  ))}
+   618→              </select>
+   619→            </Field>
+   620→          </div>
+   621→          <div className="form-row">
+   622→            <Field label="التاريخ">
+   623→              <input type="date" value={tripForm.date} onChange={(e) => setTripForm({ ...tripForm, date: e.target.value })} />
+   624→            </Field>
+   625→            <Field label="ملاحظات">
+   626→              <input value={tripForm.notes} onChange={(e) => setTripForm({ ...tripForm, notes: e.target.value })} placeholder="اختياري" />
+   627→            </Field>
+   628→          </div>
+   629→          <div style={{ display: 'flex', gap: 10 }}>
+   630→            <button className="btn primary" disabled={busy} onClick={() => void saveTrip()}>
+   631→              {busy ? 'جارٍ الحفظ…' : 'فتح الجولة'}
+   632→            </button>
+   633→            <button className="btn ghost" onClick={() => setTripForm(null)}>
+   634→              إلغاء
+   635→            </button>
+   636→          </div>
+   637→        </Modal>
+   638→      ) : null}
+   639→
+   640→      {/* ================= نافذة تفاصيل الجولة ================= */}
+   641→      {detail ? (
+   642→        <Modal title={`الجولة ${detail.trip_no} — ${detail.rep_name ?? ''}${detail.route_name ? ` (${detail.route_name})` : ''}`} onClose={() => setDetail(null)} wide>
+   643→          <div className="grid-cards" style={{ marginBottom: 12 }}>
+   644→            <div className="stat">
+   645→              <div className="label">الحالة</div>
+   646→              <div className="value" style={{ fontSize: 16 }}>{statusBadge(detail.status)}</div>
+   647→            </div>
+   648→            <div className="stat">
+   649→              <div className="label">التاريخ</div>
+   650→              <div className="value" style={{ fontSize: 16 }} dir="ltr">{detail.date}</div>
+   651→            </div>
+   652→            <div className="stat">
+   653→              <div className="label">نقد الجولة</div>
+   654→              <div className="value ok">{money(detail.cashTotalMinor)}</div>
+   655→            </div>
+   656→            <div className="stat">
+   657→              <div className="label">آجل الجولة</div>
+   658→              <div className="value err">{money(detail.creditTotalMinor)}</div>
+   659→            </div>
+   660→          </div>
+   661→          {detail.notes ? <p style={{ fontSize: 13, color: 'var(--muted)', margin: '0 0 8px' }}>ملاحظات: {detail.notes}</p> : null}
+   662→          {detail.settle_notes ? <p style={{ fontSize: 13, color: 'var(--muted)', margin: '0 0 8px' }}>ملاحظات التسوية: {detail.settle_notes}</p> : null}
+   663→
+   664→          {detail.status !== 'OPEN' ? <Banner kind="ok" text="هذه الجولة غير مفتوحة — للعرض فقط." /> : null}
+   665→
+   666→          {/* المتبقي في العربة */}
+   667→          <h3>🧮 المتبقي في العربة</h3>
+   668→          {detail.vanStock.length === 0 ? (
+   669→            <EmptyState icon="🚚" text="لم يُحمّل شيء على العربة بعد." />
+   670→          ) : (
+   671→            <table className="data" style={{ marginBottom: 16 }}>
+   672→              <thead>
+   673→                <tr>
+   674→                  <th>المنتج</th>
+   675→                  <th className="num">محمّل</th>
+   676→                  <th className="num">مباع</th>
+   677→                  <th className="num">مرتجع</th>
+   678→                  <th className="num">المتبقي</th>
+   679→                </tr>
+   680→              </thead>
+   681→              <tbody>
+   682→                {detail.vanStock.map((v) => (
+   683→                  <tr key={v.productId}>
+   684→                    <td>{products.find((p) => p.id === v.productId)?.name ?? `#${v.productId}`}</td>
+   685→                    <td className="num">{fmtQ(v.loaded)}</td>
+   686→                    <td className="num">{fmtQ(v.sold)}</td>
+   687→                    <td className="num">{fmtQ(v.returned)}</td>
+   688→                    <td className="num" style={{ fontWeight: 700 }}>{fmtQ(v.onVan)}</td>
+   689→                  </tr>
+   690→                ))}
+   691→              </tbody>
+   692→            </table>
+   693→          )}
+   694→
+   695→          {/* التحميل */}
+   696→          <h3>📦 التحميل</h3>
+   697→          {detail.loads.length === 0 ? (
+   698→            <EmptyState icon="📦" text="لا تحميل بعد." />
+   699→          ) : (
+   700→            <table className="data" style={{ marginBottom: 8 }}>
+   701→              <thead>
+   702→                <tr>
+   703→                  <th>المنتج</th>
+   704→                  <th className="num">الكمية</th>
+   705→                </tr>
+   706→              </thead>
+   707→              <tbody>
+   708→                {detail.loads.map((l, idx) => (
+   709→                  <tr key={`${l.product_id}-${idx}`}>
+   710→                    <td>{l.product_name}</td>
+   711→                    <td className="num">{fmtQ(l.qty_milli)}</td>
+   712→                  </tr>
+   713→                ))}
+   714→              </tbody>
+   715→            </table>
+   716→          )}
+   717→          {detail.status === 'OPEN' && canManage ? (
+   718→            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 8, marginBottom: 18, alignItems: 'center' }}>
+   719→              <select value={loadForm.productId} onChange={(e) => setLoadForm({ ...loadForm, productId: e.target.value })} aria-label="منتج للتحميل">
+   720→                <option value="">— منتج للتحميل —</option>
+   721→                {products
+   722→                  .filter((p) => p.track_stock === 1 && p.active === 1)
+   723→                  .map((p) => (
+   724→                    <option key={p.id} value={String(p.id)}>
+   725→                      {p.name} ({p.base_unit})
+   726→                    </option>
+   727→                  ))}
+   728→              </select>
+   729→              <input
+   730→                dir="ltr"
+   731→                inputMode="decimal"
+   732→                placeholder="الكمية"
+   733→                value={loadForm.qty}
+   734→                onChange={(e) => setLoadForm({ ...loadForm, qty: e.target.value })}
+   735→                aria-label="كمية التحميل"
+   736→              />
+   737→              <button className="btn primary" disabled={busy} onClick={() => void submitLoad()}>
+   738→                تحميل
+   739→              </button>
+   740→            </div>
+   741→          ) : null}
+   742→
+   743→          {/* المبيعات */}
+   744→          <h3>🧾 مبيعات الجولة</h3>
+   745→          {detail.sales.length === 0 ? (
+   746→            <EmptyState icon="🧾" text="لا مبيعات مسجلة على الجولة بعد." />
+   747→          ) : (
+   748→            <table className="data" style={{ marginBottom: 8 }}>
+   749→              <thead>
+   750→                <tr>
+   751→                  <th>المنتج</th>
+   752→                  <th className="num">الكمية</th>
+   753→                  <th className="num">سعر الوحدة</th>
+   754→                  <th className="num">الإجمالي</th>
+   755→                  <th>الدفع</th>
+   756→                  <th>العميل</th>
+   757→                  <th>الفاتورة</th>
+   758→                </tr>
+   759→              </thead>
+   760→              <tbody>
+   761→                {detail.sales.map((s) => (
+   762→                  <tr key={s.id}>
+   763→                    <td>{s.product_name}</td>
+   764→                    <td className="num">{fmtQ(s.qty_milli)}</td>
+   765→                    <td className="num">{money(s.unit_price_minor)}</td>
+   766→                    <td className="num">{money(Math.round((s.qty_milli * s.unit_price_minor) / 1000))}</td>
+   767→                    <td>{s.payment_type === 'CASH' ? <Badge kind="ok" text="نقدي" /> : <Badge kind="err" text="آجل" />}</td>
+   768→                    <td>{s.customer_name ?? '—'}</td>
+   769→                    <td>{s.sale_id ? `#${s.sale_id}` : '—'}</td>
+   770→                  </tr>
+   771→                ))}
+   772→              </tbody>
+   773→            </table>
+   774→          )}
+   775→          {detail.status === 'OPEN' && canManage ? (
+   776→            <>
+   777→              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+   778→                <select value={saleForm.productId} onChange={(e) => onSaleProductChange(e.target.value)} aria-label="منتج مبيع">
+   779→                  <option value="">— منتج مبيع —</option>
+   780→                  {products
+   781→                    .filter((p) => p.active === 1)
+   782→                    .map((p) => (
+   783→                      <option key={p.id} value={String(p.id)}>
+   784→                        {p.name} ({p.base_unit})
+   785→                      </option>
+   786→                    ))}
+   787→                </select>
+   788→                <input
+   789→                  dir="ltr"
+   790→                  inputMode="decimal"
+   791→                  placeholder="الكمية"
+   792→                  value={saleForm.qty}
+   793→                  onChange={(e) => setSaleForm({ ...saleForm, qty: e.target.value })}
+   794→                  aria-label="كمية البيع"
+   795→                />
+   796→                <input
+   797→                  dir="ltr"
+   798→                  inputMode="decimal"
+   799→                  placeholder="سعر الوحدة ₪"
+   800→                  value={saleForm.price}
+   801→                  onChange={(e) => setSaleForm({ ...saleForm, price: e.target.value })}
+   802→                  aria-label="سعر الوحدة"
+   803→                />
+   804→              </div>
+   805→              <div style={{ display: 'grid', gridTemplateColumns: 'auto 2fr auto', gap: 8, marginBottom: 18, alignItems: 'center' }}>
+   806→                <div className="pay-toggle" style={{ margin: 0 }}>
+   807→                  <button className={saleForm.payType === 'CASH' ? 'sel' : ''} onClick={() => setSaleForm({ ...saleForm, payType: 'CASH' })}>
+   808→                    نقدي
+   809→                  </button>
+   810→                  <button className={saleForm.payType === 'CREDIT' ? 'sel' : ''} onClick={() => setSaleForm({ ...saleForm, payType: 'CREDIT' })}>
+   811→                    آجل
+   812→                  </button>
+   813→                </div>
+   814→                <select
+   815→                  value={saleForm.customerId}
+   816→                  onChange={(e) => setSaleForm({ ...saleForm, customerId: e.target.value })}
+   817→                  disabled={saleForm.payType === 'CASH'}
+   818→                  aria-label="العميل للآجل"
+   819→                >
+   820→                  <option value="">— العميل (للآجل) —</option>
+   821→                  {customers
+   822→                    .filter((c) => c.active === 1)
+   823→                    .map((c) => (
+   824→                      <option key={c.id} value={String(c.id)}>
+   825→                        {c.name}
+   826→                      </option>
+   827→                    ))}
+   828→                </select>
+   829→                <button className="btn primary" disabled={busy} onClick={() => void submitSale()}>
+   830→                  تسجيل بيع
+   831→                </button>
+   832→              </div>
+   833→            </>
+   834→          ) : null}
+   835→
+   836→          {/* المرتجعات */}
+   837→          <h3>↩️ المرتجعات</h3>
+   838→          {detail.returns.length === 0 ? (
+   839→            <EmptyState icon="↩️" text="لا مرتجعات على الجولة بعد." />
+   840→          ) : (
+   841→            <table className="data" style={{ marginBottom: 8 }}>
+   842→              <thead>
+   843→                <tr>
+   844→                  <th>المنتج</th>
+   845→                  <th className="num">الكمية</th>
+   846→                  <th>الحالة</th>
+   847→                  <th>ملاحظة</th>
+   848→                </tr>
+   849→              </thead>
+   850→              <tbody>
+   851→                {detail.returns.map((r) => (
+   852→                  <tr key={r.id}>
+   853→                    <td>{r.product_name}</td>
+   854→                    <td className="num">{fmtQ(r.qty_milli)}</td>
+   855→                    <td>{r.condition === 'GOOD' ? <Badge kind="ok" text="سليمة" /> : <Badge kind="err" text="تالفة" />}</td>
+   856→                    <td>{r.note ?? '—'}</td>
+   857→                  </tr>
+   858→                ))}
+   859→              </tbody>
+   860→            </table>
+   861→          )}
+   862→          {detail.status === 'OPEN' && canManage ? (
+   863→            <>
+   864→              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+   865→                <select
+   866→                  value={returnForm.productId}
+   867→                  onChange={(e) => setReturnForm({ ...returnForm, productId: e.target.value })}
+   868→                  aria-label="منتج مرتجع"
+   869→                >
+   870→                  <option value="">— منتج مرتجع —</option>
+   871→                  {detail.vanStock
+   872→                    .filter((v) => v.onVan > 0)
+   873→                    .map((v) => {
+   874→                      const p = products.find((x) => x.id === v.productId)
+   875→                      return (
+   876→                        <option key={v.productId} value={String(v.productId)}>
+   877→                          {p ? p.name : `#${v.productId}`} (متبقي {fmtQ(v.onVan)})
+   878→                        </option>
+   879→                      )
+   880→                    })}
+   881→                </select>
+   882→                <input
+   883→                  dir="ltr"
+   884→                  inputMode="decimal"
+   885→                  placeholder="الكمية"
+   886→                  value={returnForm.qty}
+   887→                  onChange={(e) => setReturnForm({ ...returnForm, qty: e.target.value })}
+   888→                  aria-label="كمية المرتجع"
+   889→                />
+   890→                <select
+   891→                  value={returnForm.condition}
+   892→                  onChange={(e) => setReturnForm({ ...returnForm, condition: e.target.value === 'DAMAGED' ? 'DAMAGED' : 'GOOD' })}
+   893→                  aria-label="حالة المرتجع"
+   894→                >
+   895→                  <option value="GOOD">سليمة (تعود للمخزون)</option>
+   896→                  <option value="DAMAGED">تالفة (توثق كهالك)</option>
+   897→                </select>
+   898→              </div>
+   899→              <div style={{ display: 'grid', gridTemplateColumns: '2fr auto', gap: 8, marginBottom: 18, alignItems: 'center' }}>
+   900→                <input
+   901→                  value={returnForm.note}
+   902→                  onChange={(e) => setReturnForm({ ...returnForm, note: e.target.value })}
+   903→                  placeholder="ملاحظة (اختياري)"
+   904→                  aria-label="ملاحظة المرتجع"
+   905→                />
+   906→                <button className="btn primary" disabled={busy} onClick={() => void submitReturn()}>
+   907→                  تسجيل مرتجع
+   908→                </button>
+   909→              </div>
+   910→            </>
+   911→          ) : null}
+   912→
+   913→          {/* التسوية */}
+   914→          {detail.status === 'OPEN' && canManage ? (
+   915→            <div style={{ borderTop: '2px solid var(--brown-100)', paddingTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+   916→              <button
+   917→                className="btn primary"
+   918→                disabled={busy}
+   919→                onClick={() => {
+   920→                  setSettleCounted('')
+   921→                  setSettleNotes('')
+   922→                  setSettleFor(detail)
+   923→                }}
+   924→              >
+   925→                ✅ تسوية الجولة وترحيل الفواتير
+   926→              </button>
+   927→              <span style={{ color: 'var(--muted)', fontSize: 13, alignSelf: 'center' }}>
+   928→                المتوقع نقدًا: {money(detail.cashTotalMinor)} — آجل: {money(detail.creditTotalMinor)}
+   929→              </span>
+   930→            </div>
+   931→          ) : null}
+   932→        </Modal>
+   933→      ) : null}
+   934→
+   935→      {/* ================= نافذة التسوية ================= */}
+   936→      {settleFor ? (
+   937→        <Modal title={`تسوية الجولة ${settleFor.trip_no}`} onClose={() => setSettleFor(null)}>
+   938→          <Banner
+   939→            kind="error"
+   940→            text="التسوية نهائية: تُرحّل مبيعات الجولة كفواتير بيع، يدخل النقد للصندوق، ويُقيَّد الآجل على دفتر العملاء — لا يمكن التكرار."
+   941→          />
+   942→          <div className="grid-cards" style={{ marginBottom: 12 }}>
+   943→            <div className="stat">
+   944→              <div className="label">النقد المتوقع (حسب مبيعات الجولة)</div>
+   945→              <div className="value warn">{money(settleFor.cashTotalMinor)}</div>
+   946→            </div>
+   947→            <div className="stat">
+   948→              <div className="label">الآجل المرحّل للعملاء</div>
+   949→              <div className="value err">{money(settleFor.creditTotalMinor)}</div>
+   950→            </div>
+   951→          </div>
+   952→          <Field label="النقد المجرود فعليًا" hint="اتركه فارغًا إذا جرودت كامل النقد المتوقع — أي فرق يُوثق كتسوية">
+   953→            <input dir="ltr" inputMode="decimal" placeholder={String(settleFor.cashTotalMinor / 100)} value={settleCounted} onChange={(e) => setSettleCounted(e.target.value)} autoFocus />
+   954→          </Field>
+   955→          <Field label="ملاحظات التسوية">
+   956→            <input value={settleNotes} onChange={(e) => setSettleNotes(e.target.value)} placeholder="اختياري" />
+   957→          </Field>
+   958→          <div style={{ display: 'flex', gap: 10 }}>
+   959→            <button className="btn primary" disabled={busy} onClick={() => void submitSettle()}>
+   960→              {busy ? 'جارٍ الترحيل…' : 'تأكيد التسوية'}
+   961→            </button>
+   962→            <button className="btn ghost" onClick={() => setSettleFor(null)}>
+   963→              تراجع
+   964→            </button>
+   965→          </div>
+   966→        </Modal>
+   967→      ) : null}
+   968→
+   969→      {/* ================= نافذة إلغاء جولة ================= */}
+   970→      {cancelFor ? (
+   971→        <Modal title={`إلغاء جولة: ${cancelFor.trip_no}`} onClose={() => setCancelFor(null)}>
+   972→          <Banner kind="error" text="الإلغاء متاح للجولة المفتوحة الخالية من البيع/المرتجعات — يُرد التحميل كاملًا للمخزون." />
+   973→          <Field label="سبب الإلغاء *" hint="يُوثق في سجل التدقيق — 3 أحرف على الأقل">
+   974→            <textarea
+   975→              rows={3}
+   976→              value={cancelReason}
+   977→              onChange={(e) => setCancelReason(e.target.value)}
+   978→              placeholder="مثال: تعطل العربة / لم ينطلق المندوب"
+   979→              autoFocus
+   980→            />
+   981→          </Field>
+   982→          <div style={{ display: 'flex', gap: 10 }}>
+   983→            <button className="btn danger" disabled={busy} onClick={() => void submitCancel()}>
+   984→              {busy ? 'جارٍ الإلغاء…' : 'تأكيد الإلغاء'}
+   985→            </button>
+   986→            <button className="btn ghost" onClick={() => setCancelFor(null)}>
+   987→              تراجع
+   988→            </button>
+   989→          </div>
+   990→        </Modal>
+   991→      ) : null}
+   992→    </div>
+   993→  )
+   994→}
+   995→
