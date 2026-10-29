@@ -101,7 +101,8 @@ async function main(): Promise<void> {
   await sleep(600)
   const heading = String(await evaluate(`document.querySelector('.content h1')?.textContent ?? ''`))
   check('شاشة الإعدادات فُتحت', heading.includes('الإعدادات'), heading)
-  const fields = Number(await evaluate(`document.querySelectorAll('.card input').length`))
+  // rc.8: العدّ يخص بطاقة كلمة المرور فقط (أول .card) — بطاقة النسخ الاحتياطي فيها حقل ملاحظة مستقل
+  const fields = Number(await evaluate(`document.querySelector('.card')?.querySelectorAll('input').length ?? 0`))
   check('ثلاثة حقول كلمة مرور', fields === 3, `fields=${fields}`)
 
   // تغيير 1234 → 4455 عبر الواجهة
@@ -109,7 +110,8 @@ async function main(): Promise<void> {
   const inputs = await evaluate(`
     (() => {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
-      const els = document.querySelectorAll('.card input')
+      const card = document.querySelector('.card')
+      const els = card ? card.querySelectorAll('input') : []
       const vals = ['1234', '4455', '4455']
       els.forEach((el, i) => { setter.call(el, vals[i]); el.dispatchEvent(new Event('input', { bubbles: true })) })
       return els.length

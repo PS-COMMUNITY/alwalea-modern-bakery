@@ -369,12 +369,19 @@ async function phase2(): Promise<void> {
   const batches = await invoke<{ id: number }[]>('production.list')
   const products = await invoke<{ id: number }[]>('products.list', { includeInactive: true })
   const purchases = await invoke<{ id: number }[]>('purchases.list')
-  const backups = await invoke<{ id: number }[]>('backup.list')
+  const backups = await invoke<Record<string, unknown>[]>('backup.list')
   check('P03 الفواتير بقيت بعد الإعادة', sales.length === state.sales, `${sales.length}/${state.sales}`)
   check('P04 دفعات الإنتاج بقيت', batches.length === state.batches, `${batches.length}/${state.batches}`)
   check('P05 المنتجات بقيت', products.length === state.products, `${products.length}/${state.products}`)
   check('P06 المشتريات بقيت', purchases.length === state.purchases, `${purchases.length}/${state.purchases}`)
-  check('P07 سجل النسخ الاحتياطي بقي', backups.length === state.backups, `${backups.length}/${state.backups}`)
+  // P07 (rc.8/P0-2): السجل اليدوي بقي + نسخة تلقائية واحدة أُنشئت عند إغلاق التطبيق بين الطورين
+  // (النسخ التلقائي عند الإغلاق سلوك موثق في rc.8 — التحدي أقوى من العدّ الثابت السابق)
+  const autoRows = backups.filter((b) => String(b.path ?? '').includes('bakery-backup-auto-'))
+  check(
+    'P07 سجل النسخ بقي + نسخة تلقائية واحدة من الإغلاق (P0-2)',
+    backups.length === state.backups + 1 && autoRows.length === 1 && String(autoRows[0]?.note ?? '') === 'تلقائية عند الإغلاق',
+    `total=${backups.length}/${state.backups} auto=${autoRows.length} note=${String(autoRows[0]?.note ?? '-')}`
+  )
 
   // P08: فتح وردية جديدة والتنقل السريع
   await invoke('shifts.open', { openingCashMinor: 2000 })

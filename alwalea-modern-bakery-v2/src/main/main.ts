@@ -7,6 +7,7 @@ import * as path from 'node:path'
 import * as fs from 'node:fs'
 import { BakeryDb, wasmCandidatesFor } from './db'
 import { dispatch } from './registry'
+import { autoBackupOnQuit } from './services/backup'
 import { isIpcChannel } from '../shared/types'
 import type { ApiEnvelope } from '../shared/types'
 
@@ -176,6 +177,35 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  // rc.8 (P0-2): نسخة تلقائية قبل الإغلاق — تعيد استخدام exportBackup المجرّبة (48 فحصًا).
+  // النسخ محاولة لا شرط: أي فشل يُسجل داخليًا (autobackup.log) ولا يمنع الإغلاق أبدًا.
+  if (db && !isSmoke) {
+    const currentDb = db // تثبيت للأنواع داخل callback — لا إعادة تعيين أثناء النسخ
+    try {
+      autoBackupOnQuit({
+        db: currentDb,
+        user: null,
+        audit: (action, entity, entityId, details) => {
+          currentDb.run(
+            `INSERT INTO audit_log (date, user_id, username, action, entity, entity_id, details, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              currentDb.today(),
+              null,
+              'system',
+              action,
+              entity ?? null,
+              entityId ?? null,
+              details === undefined || details === null ? null : JSON.stringify(details),
+              currentDb.now()
+            ]
+          )
+        }
+      })
+    } catch {
+      // الإغلاق يجب أن ينجح دائمًا — لا شيء هنا يرمي أو يمنع
+    }
+  }
   db?.close()
   db = null
 })

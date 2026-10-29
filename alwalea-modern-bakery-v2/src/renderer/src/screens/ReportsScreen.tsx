@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { call, money } from '../api'
+import { downloadCsv, csvMoney } from '../csvExport'
 import { EmptyState, Banner } from '../components/ui'
 
 interface SalesDailyRow {
@@ -87,6 +88,21 @@ export default function ReportsScreen(): ReactNode {
         </div>
         <button className="btn primary" onClick={refresh}>
           عرض التقرير
+        </button>
+        <button
+          className="btn ghost"
+          disabled={rows === null || rows.length === 0}
+          onClick={() => {
+            if (!rows) return
+            // rc.8 (P0-1): تصدير CSV بـ BOM — أعمدة عربية سليمة في Excel (وعد UAT 2.12)
+            downloadCsv(`تقرير-المبيعات_${applied.from}_${applied.to}`, [
+              ['التاريخ', 'عدد الفواتير', 'الإجمالي', 'المدفوع', 'الآجل'],
+              ...rows.map((r) => [r.date, Number(r.invoices), csvMoney(r.total_minor), csvMoney(r.paid_minor), csvMoney(r.credit_minor)]),
+              ['الإجمالي', totals.invoices, csvMoney(totals.total), csvMoney(totals.paid), csvMoney(totals.credit)]
+            ])
+          }}
+        >
+          ⬇ تصدير CSV
         </button>
       </div>
 

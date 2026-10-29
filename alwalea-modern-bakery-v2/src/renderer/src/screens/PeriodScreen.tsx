@@ -9,6 +9,7 @@ import type { PeriodRow, StockCountRow, StockCountItemRow, CountVarianceRow, Ses
 import { currentMonthKey } from '../../../shared/period'
 import { toMilli } from '../../../shared/money'
 import { call, money, qty as fmtQ, fmtDateTime } from '../api'
+import { downloadCsv, csvMoney } from '../csvExport'
 import { Field, Modal, Banner, Badge, EmptyState } from '../components/ui'
 
 type CountDetail = Omit<StockCountRow, 'items_total' | 'items_counted' | 'diff_items' | 'diff_value_minor'> & {
@@ -502,7 +503,29 @@ export default function PeriodScreen(props: { user: SessionUser }): ReactNode {
           {variance.rows.length === 0 ? (
             <EmptyState icon="📄" text="لا بنود مجرودة بعد — احفظ الكميات المجرودة أولًا ثم اعرض التقرير." />
           ) : (
-            <table className="data">
+            <>
+              <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 8 }}>
+                <button
+                  className="btn ghost"
+                  onClick={() => {
+                    // rc.8 (P0-1): تصدير فروق الجرد CSV بـ BOM — وعد UAT 2.12
+                    downloadCsv(`فروق-الجرد_${variance.count.count_no}`, [
+                      ['المنتج', 'رصيد الدفتر', 'المجرود', 'الفرق', 'تكلفة الوحدة', 'قيمة الفرق'],
+                      ...variance.rows.map((r) => [
+                        r.product_name,
+                        fmtQ(r.system_qty_milli),
+                        r.counted_qty_milli === null ? '' : fmtQ(r.counted_qty_milli),
+                        fmtQ(r.diff_milli),
+                        csvMoney(r.unit_cost_minor),
+                        csvMoney(r.diff_value_minor)
+                      ])
+                    ])
+                  }}
+                >
+                  ⬇ تصدير CSV
+                </button>
+              </div>
+              <table className="data">
               <thead>
                 <tr>
                   <th>المنتج</th>
@@ -532,6 +555,7 @@ export default function PeriodScreen(props: { user: SessionUser }): ReactNode {
                 ))}
               </tbody>
             </table>
+            </>
           )}
         </Modal>
       ) : null}

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { SessionUser } from '../../../shared/types'
-import { call, fmtDateTime } from '../api'
+import { call, fmtDateTime, ageText, BACKUP_STALE_MS } from '../api'
 import { Field, Banner } from '../components/ui'
 
 export default function SettingsScreen(props: { user: SessionUser }): ReactNode {
@@ -310,6 +310,25 @@ function BackupSection(): ReactNode {
           آخر نسخة: <code dir="ltr" style={{ overflowWrap: 'anywhere', color: 'var(--brown-700)' }}>{lastExport.path}</code>{' '}
           ({formatBytes(lastExport.sizeBytes)})
         </p>
+      ) : null}
+
+      {/* ---------- مؤشر عمر آخر نسخة (rc.8 P0-2) ---------- */}
+      {list !== null ? (
+        (() => {
+          const newest = list[0]
+          const stale = !newest || Date.now() - new Date(newest.created_at).getTime() > BACKUP_STALE_MS
+          return (
+            <p
+              style={{ fontSize: 13, fontWeight: 700, margin: '0 0 14px', color: stale ? 'var(--err)' : 'var(--ok)' }}
+              role="status"
+            >
+              {stale ? '⚠ ' : '✓ '}
+              {newest
+                ? `آخر نسخة احتياطية: ${ageText(newest.created_at)} — نسخة تلقائية تُنشأ عند كل إغلاق للتطبيق`
+                : 'لا نسخة احتياطية بعد — نسخة تلقائية تُنشأ عند كل إغلاق للتطبيق، أو أنشئ نسخة الآن'}
+            </p>
+          )
+        })()
       ) : null}
 
       {/* ---------- جدول النسخ ---------- */}

@@ -32,3 +32,23 @@ export function fmtDateTime(iso: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+/** نص عمر نسخة احتياطية: «قبل دقائق/ساعة/يوم» — rc.8 (P0-2) مؤشر عمر النسخة */
+export function ageText(iso: string, now = Date.now()): string {
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const mins = Math.max(0, Math.round((now - t) / 60000))
+  if (mins < 1) return 'الآن'
+  if (mins < 60) return `قبل ${mins} دقيقة`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) {
+    const h = hours === 1 ? 'ساعة' : hours === 2 ? 'ساعتين' : `${hours} ساعات`
+    return `قبل ${h}`
+  }
+  const days = Math.round(hours / 24)
+  const d = days === 1 ? 'يوم' : days === 2 ? 'يومين' : days <= 10 ? `${days} أيام` : `${days} يومًا`
+  return `قبل ${d}`
+}
+
+/** هل آخر نسخة احتياطية أقدم من 3 أيام (أو لا توجد)؟ — يحمرّ المؤشر فوق العتبة */
+export const BACKUP_STALE_MS = 3 * 24 * 60 * 60 * 1000

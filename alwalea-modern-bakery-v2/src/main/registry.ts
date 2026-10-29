@@ -54,7 +54,7 @@ publicRoute('status.get', (ctx) => {
   return {
     setupCompleted,
     businessName: setupCompleted ? (ctx.db.get<{ v: string }>("SELECT value AS v FROM settings WHERE key = 'business_name'")?.v ?? null) : null,
-    version: '1.0.0',
+    version: '1.0.0-rc.8',
     schemaVersion: 1
   }
 })

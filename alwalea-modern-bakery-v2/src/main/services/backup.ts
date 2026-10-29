@@ -83,7 +83,7 @@ function backupsDir(ctx: SvcCtx): string {
   return path.join(path.dirname(ctx.db.filePath), '..', 'backups')
 }
 
-export function exportBackup(ctx: SvcCtx, payload: Record<string, unknown>): { path: string; sizeBytes: number; schemaVersion: number; exportedAt: string } {
+export function exportBackup(ctx: SvcCtx, payload: Record<string, unknown>, opts?: { auto?: boolean }): { path: string; sizeBytes: number; schemaVersion: number; exportedAt: string } {
   const note = optNote(payload)
   const data: BackupFile = {
     app: 'alwalea-modern-bakery',
@@ -100,7 +100,9 @@ export function exportBackup(ctx: SvcCtx, payload: Record<string, unknown>): { p
   const dir = backupsDir(ctx)
   fs.mkdirSync(dir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const file = path.join(dir, `bakery-backup-${stamp}.json`)
+  // rc.8 (P0-2): النسخ التلقائية تحمل بادئة مميزة ليقصر عليها الدوران فقط — اليدوية بلا حد
+  const prefix = opts?.auto ? AUTO_BACKUP_PREFIX : 'bakery-backup-'
+  const file = path.join(dir, `${prefix}${stamp}.json`)
   fs.writeFileSync(file, JSON.stringify(data), 'utf8')
   const size = fs.statSync(file).size
   ctx.db.tx(() => {
@@ -124,6 +126,57 @@ function optNote(payload: Record<string, unknown>): string | null {
 
 export function listBackups(ctx: SvcCtx): unknown[] {
   return ctx.db.query('SELECT id, created_at, path, size_bytes, schema_version, note FROM backup_records ORDER BY id DESC LIMIT 100')
+}
+
+// =============================================================
+// rc.8 (P0-2): النسخ التلقائي عند إغلاق التطبيق
+// يعيد استخدام exportBackup نفسها (الدالة المجرّبة 48 فحصًا) — لا منطق نسخ جديد.
+// - دوران: تُحفظ آخر 14 نسخة تلقائية فقط (بادئة bakery-backup-auto-) — اليدوية لا تُمسّ.
+// - لا ترمي أبدًا: الإغلاق يجب أن ينجح دائمًا — النسخ محاولة، وليست شرطًا.
+// - كل نجاح/فشل يُسجل في ملف داخلي autobackup.log بجانب النسخ.
+// =============================================================
+const AUTO_BACKUP_PREFIX = 'bakery-backup-auto-'
+const AUTO_BACKUP_KEEP = 14
+const AUTO_BACKUP_LOG = 'autobackup.log'
+
+function appendAutoBackupLog(dir: string, line: string): void {
+  try {
+    fs.appendFileSync(path.join(dir, AUTO_BACKUP_LOG), `${line}\n`, 'utf8')
+  } catch {
+    // حتى سجل الفشل نفسه لا يمنع الإغلاق أبدًا
+  }
+}
+
+export function autoBackupOnQuit(ctx: SvcCtx): { ok: boolean; path?: string; error?: string } {
+  const dir = backupsDir(ctx)
+  try {
+    const res = exportBackup(ctx, { note: 'تلقائية عند الإغلاق' }, { auto: true })
+    // دوران النسخ التلقائية: احتفظ بآخر 14 — الختم ISO المعدّل يرتّب نصيًا = ترتيب زمني
+    try {
+      const autos = fs
+        .readdirSync(dir)
+        .filter((f) => f.startsWith(AUTO_BACKUP_PREFIX) && f.endsWith('.json'))
+        .sort()
+      while (autos.length > AUTO_BACKUP_KEEP) {
+        const oldest = autos.shift()
+        if (oldest) {
+          try {
+            fs.unlinkSync(path.join(dir, oldest))
+          } catch {
+            // ملف محذوف/مقفل خارجيًا — لا يفشل الدورة ولا الإغلاق
+          }
+        }
+      }
+    } catch {
+      // فشل الدوران لا يفشل النسخ ولا الإغلاق
+    }
+    appendAutoBackupLog(dir, `OK ${new Date().toISOString()} ${res.path} ${res.sizeBytes}B`)
+    return { ok: true, path: res.path }
+  } catch (e) {
+    const msg = e instanceof Error ? (e.stack ?? e.message) : String(e)
+    appendAutoBackupLog(dir, `FAIL ${new Date().toISOString()} ${msg.replace(/\s+/g, ' ').slice(0, 500)}`)
+    return { ok: false, error: msg }
+  }
 }
 
 function parseBackup(json: string): BackupFile {
