@@ -20,6 +20,7 @@
 | `Alwalea Modern Bakery-1.0.0-rc.11-setup.exe` | 88,239,851 B | `98631dcd150d9cd5ac3d72472bb27aee1120e959544409f7a079da2856481049` |
 | `Alwalea Modern Bakery-1.0.0-rc.11-portable.exe` | 88,004,705 B | `1152116e0d85b21d584f46b34095a40d5472aaae8875607dbe9549facc209e25` |
 | `Alwalea-rc11-portable.zip` | 126,028,839 B | `529a71ca09e0ccbac982b8c86a9280257691457c782afdababd1e0e2165ad018` |
+| [`Alwalea-COMPLETE-REPORT.md`](../../releases/download/v1.0.0-rc.11/Alwalea-COMPLETE-REPORT.md) | 2,146,743 B | `b394db6665dd5322a76fb5a7c28a29c5d93b8f5e25643baaa86518063ce9eb03` — التقرير الشامل + الأكواد الكاملة (264 ملفًا) |
 
 **بصمة المصدر:** git `0f6ef22` (سلسلة `496728b` rc.11) — package.json `1.0.0-rc.11`.
 
