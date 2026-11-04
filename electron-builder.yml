@@ -1,0 +1,49 @@
+appId: com.alwalea.bakery
+productName: Alwalea Modern Bakery
+copyright: © Alwalea Modern Bakery
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+# sql.js (WASM) يبقى داخل asar — نقرأ ملف wasm عبر fs المدعوم من asar
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+  # هذه البيئة لا تحتوي wine لذلك تُتخطى التوقيع فقط،
+  # مع الإبقاء على تحرير الموارد (الأيقونة وبيانات الإصدار) وهي native JS في electron-builder 26.
+  signExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+
+linux:
+  target:
+    - AppImage
+  icon: build/icon.png
+  category: Office
+  maintainer: Alwalea Modern Bakery
+
+electronLanguages:
+  - ar
+  - en
