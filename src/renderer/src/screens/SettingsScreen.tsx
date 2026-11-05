@@ -6,7 +6,7 @@
 // =============================================================
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AppSettings, SessionUser, UserRow } from '../../../shared/types'
+import type { AppSettings, SessionUser, UserRow, StatusInfo } from '../../../shared/types'
 import { ROLE_LABELS, ROLES, type Role } from '../../../shared/permissions'
 import { call, fmtDateTime, ageText, BACKUP_STALE_MS } from '../api'
 import { Field, Banner, Modal, Badge, ConfirmModal } from '../components/ui'
@@ -28,7 +28,29 @@ export default function SettingsScreen(props: { user: SessionUser }): ReactNode 
       {canUsers ? <UsersCard /> : null}
       <PasswordCard userId={props.user.id} />
       {canBackup ? <BackupSection /> : null}
+      {/* rc.13: تذييل يعرض إصدار التطبيق من status.get — يعرف المالك أنه يشغّل نسخة قديمة أو حديثة */}
+      <VersionFooter />
     </div>
+  )
+}
+
+// rc.13: سطر تذييل خافت صغير «الإصدار X» — يُخفى إن تعذر جلب الحالة
+function VersionFooter(): ReactNode {
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    void (async () => {
+      try {
+        setVersion((await call<StatusInfo>('status.get', {})).version)
+      } catch {
+        // التذييل تجميلي — لا رسائل خطأ له
+      }
+    })()
+  }, [])
+  if (!version) return null
+  return (
+    <p style={{ marginTop: 18, fontSize: 12, opacity: 0.55, textAlign: 'center' }} dir="ltr">
+      الإصدار {version}
+    </p>
   )
 }
 

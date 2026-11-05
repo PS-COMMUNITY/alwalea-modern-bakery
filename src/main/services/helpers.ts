@@ -114,11 +114,19 @@ export const STOCK_COUNT_LOCK_MESSAGE =
 
 /**
  * هل توجد ورقة جرد نشطة (DRAFT)؟ — يعيد الورقة أو undefined
+ * rc.13 (P0-1): نظاما الجرد كلاهما يحجبان — أوراق شاشة الفترات (counts.* → stock_count)
+ * وأوراق شاشة الجرد (stockcount.* → stock_counts). مسودة في أي منهما تمنع حركات المخزون.
  */
-export function activeStockCount(db: BakeryDb): { id: number; count_no: string; month: string } | undefined {
-  return db.get<{ id: number; count_no: string; month: string }>(
-    "SELECT id, count_no, month FROM stock_count WHERE status = 'DRAFT' ORDER BY id DESC LIMIT 1"
+export function activeStockCount(db: BakeryDb): { id: number; label: string } | undefined {
+  const a = db.get<{ id: number; count_no: string }>(
+    "SELECT id, count_no FROM stock_count WHERE status = 'DRAFT' ORDER BY id DESC LIMIT 1"
   )
+  if (a) return { id: Number(a.id), label: a.count_no }
+  const b = db.get<{ id: number; period_ym: string }>(
+    "SELECT id, period_ym FROM stock_counts WHERE status = 'DRAFT' ORDER BY id DESC LIMIT 1"
+  )
+  if (b) return { id: Number(b.id), label: `جرد ${b.period_ym}` }
+  return undefined
 }
 
 /**
@@ -128,7 +136,7 @@ export function activeStockCount(db: BakeryDb): { id: number; count_no: string; 
 export function assertNoActiveStockCount(db: BakeryDb): void {
   const c = activeStockCount(db)
   if (c) {
-    throw new ApiError(`${STOCK_COUNT_LOCK_MESSAGE} — الورقة: ${c.count_no}`, 423)
+    throw new ApiError(`${STOCK_COUNT_LOCK_MESSAGE} — الورقة: ${c.label}`, 423)
   }
 }
 
@@ -148,9 +156,9 @@ export function addStockMovement(
   }
 ): void {
   // rc.12 (P0-1): كل حركة مخزنية تمر من هنا — منع أي كتابة أثناء جرد نشط.
-  // الاستثناء الوحيد: حركات الاعتماد نفسه (refType='StockCount') لأنها إتمام الجرد
-  // وتحدث بعد تغيير حالة الورقة إلى APPROVED داخل نفس المعاملة.
-  if (args.refType !== 'StockCount') {
+  // الاستثناء الوحيد: حركات الاعتماد نفسه لأنها إتمام الجرد وتحدث داخل نفس المعاملة —
+  // rc.13: استثناء بصيغتي refType ('StockCount' لأوراق counts.* و'stock_count' لأوراق stockcount.*)
+  if (args.refType !== 'StockCount' && args.refType !== 'stock_count') {
     assertNoActiveStockCount(db)
   }
   db.run(

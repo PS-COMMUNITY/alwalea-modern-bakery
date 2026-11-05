@@ -201,9 +201,10 @@ export function createCount(
   const note = optStr(payload.note, 'ملاحظة', 300)
   return ctx.db.tx(() => {
     // rc.12 (P0-1): لا جردان نشطان معًا — جرد واحد بكل لحظة حتى تكون اللقطة متسقة
+    // rc.13: الفحص يشمل مسودات النظامين (stock_count وstock_counts)
     const existing = activeStockCount(ctx.db)
     if (existing) {
-      throw new ApiError(`يوجد جرد نشط بالفعل (${existing.count_no}) — اعتمده أو احذفه قبل بدء جرد جديد`, 409)
+      throw new ApiError(`يوجد جرد نشط بالفعل (${existing.label}) — اعتمده أو احذفه قبل بدء جرد جديد`, 409)
     }
     // حاجز الشهر المقفل: الاعتماد لاحقًا يكتب حركات بتاريخ الآن — الشهر الحالي مطلوب مفتوحًا
     assertMonthOpen(ctx.db, new Date())
@@ -355,7 +356,12 @@ export function cancelCount(
       'SELECT id, count_no, status, month FROM stock_count WHERE id = ?',
       [id]
     )
-    if (!c) throw new ApiError('ورقة الجرد غير موجودة', 404)
+    if (!c) {
+      // rc.13: شاشة الجرد (stockcount.*) تحذف مسوداتها عبر counts.cancel أيضًا —
+      // الورقة غير موجودة في نظام الفترات ⇒ نحاول نظام الجرد الثاني (stock_counts)
+      // بدل 404 (أو أسوأ: حذف ورقة أخرى بنفس الرقم من النظام الآخر)
+      return cancelSheetFromStockCounts(ctx, id, reason)
+    }
     if (c.status !== 'DRAFT') {
       throw new ApiError('لا يمكن حذف ورقة جرد معتمدة — الاعتماد كتب حركات تسوية موثقة تبقى في السجل', 409)
     }
@@ -367,6 +373,24 @@ export function cancelCount(
     ctx.audit('STOCK_COUNT_CANCEL', 'StockCount', id, { countNo: c.count_no, month: c.month, reason: reason ?? null })
     return { id, countNo: c.count_no, deleted: true as const }
   })
+}
+
+/** rc.13: حذف مسودة من نظام الجرد الثاني (جدول stock_counts — شاشة الجرد) بذات الضوابط */
+function cancelSheetFromStockCounts(ctx: SvcCtx, id: number, reason: string | null): { id: number; countNo: string; deleted: true } {
+  const s = ctx.db.get<{ id: number; period_ym: string; status: string }>(
+    'SELECT id, period_ym, status FROM stock_counts WHERE id = ?',
+    [id]
+  )
+  if (!s) throw new ApiError('ورقة الجرد غير موجودة', 404)
+  if (s.status !== 'DRAFT') {
+    throw new ApiError('لا يمكن حذف ورقة جرد معتمدة — الاعتماد كتب حركات تسوية موثقة تبقى في السجل', 409)
+  }
+  if (isMonthLocked(ctx.db, s.period_ym)) throw new ApiError(MONTH_LOCKED_MESSAGE, 423)
+  assertMonthOpen(ctx.db, new Date())
+  ctx.db.run('DELETE FROM stock_count_items WHERE count_id = ?', [id])
+  ctx.db.run('DELETE FROM stock_counts WHERE id = ?', [id])
+  ctx.audit('STOCK_COUNT_CANCEL', 'StockCountSheet', id, { periodYm: s.period_ym, source: 'stock_counts', reason: reason ?? null })
+  return { id, countNo: `جرد ${s.period_ym}`, deleted: true as const }
 }
 
 /** تقرير فروق الجرد: البنود المجرودة فقط + ملخص إجمالي (للمعتمدة أو المسودة) */

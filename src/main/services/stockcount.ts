@@ -15,7 +15,8 @@ import type {
   VarianceReport
 } from '../../shared/types'
 import { STOCK_COUNT_REASONS } from '../../shared/types'
-import { SvcCtx, addStockMovement } from './helpers'
+import { monthKeyOf } from '../../shared/period'
+import { SvcCtx, addStockMovement, activeStockCount } from './helpers'
 
 /** أسباب فروق الجرد — قائمة إلزامية مغلقة (المصدر: shared/types) */
 export const REASONS = STOCK_COUNT_REASONS
@@ -158,6 +159,12 @@ export function openCount(ctx: SvcCtx, payload: Record<string, unknown>): StockC
     const existing = latestCountFor(ctx, periodYm)
     if (existing && existing.status === 'DRAFT') return buildView(ctx, existing)
 
+    // rc.13 (P0-1): لا جردان نشطان معًا (نفس قاعدة counts.create) — مسودة في أي من النظامين تمنع فتح جرد جديد
+    const active = activeStockCount(ctx.db)
+    if (active) {
+      throw new ApiError(`يوجد جرد نشط بالفعل (${active.label}) — اعتمده أو احذفه قبل بدء جرد جديد`, 409)
+    }
+
     const username = ctx.user?.username ?? 'غير معروف'
     ctx.db.run('INSERT INTO stock_counts (period_ym, status, created_at, created_by) VALUES (?, ?, ?, ?)', [
       periodYm,
@@ -231,6 +238,9 @@ export function approveCount(ctx: SvcCtx, payload: Record<string, unknown>): Sto
     const count = requireCount(ctx, countId)
     if (count.status === 'APPROVED') throw new ApiError('الجرد معتمد مسبقًا', 409)
     assertPeriodOpen(ctx, count.period_ym)
+    // rc.13 (P0-2): حركات الاعتماد تُكتب بتاريخ اليوم — شهر اليوم مطلوب مفتوحًا أيضًا
+    // (نمط counts.approve في period.ts: فحص شهر الورقة + الشهر الحالي معًا)
+    assertPeriodOpen(ctx, monthKeyOf(new Date()))
     // فهرس فريد جزئي: جرد معتمد واحد فقط لكل شهر — رسالة عربية واضحة بدل خطأ SQLite
     const otherApproved = ctx.db.get<{ id: number }>(
       "SELECT id FROM stock_counts WHERE period_ym = ? AND status = 'APPROVED' AND id != ?",

@@ -441,6 +441,10 @@ async function main(): Promise<void> {
   check('G7: فتح جرد ثانٍ بعد الاعتماد يعيد مسودة جديدة (إعادة عدّ مسموحة)', reopen.ok === true && reopen.data?.count?.status === 'DRAFT', reopen.error ?? '')
   const secondApprove = await invoke(db3, 'stockcount.approve', { token: token3, countId: reopen.data?.count?.id })
   check('G7: اعتماد جرد ثانٍ لنفس الشهر مرفوض برسالة عربية (فهرس فريد جزئي)', secondApprove.ok === false && (secondApprove.error ?? '').includes('جرد معتمد مسبقًا'), secondApprove.error ?? '')
+  // rc.13: حذف المسودة الثانية عبر counts.cancel (الآن يفهم مسودات النظامين) —
+  // المسودة المفتوحة تمنع حركات المخزون بأكملها فلا يصح إكمال فحوص البيع بعدها
+  const delReopen = await invoke(db3, 'counts.cancel', { token: token3, id: reopen.data?.count?.id, reason: 'تنظيف مسودة اختبار G7' })
+  check('G7: حذف مسودة نظام الجرد الثاني عبر counts.cancel ينجح', delReopen.ok === true, delReopen.error ?? '')
   // الحاجز الموحد: إقفال الشهر يمنع بيعًا بتاريخ داخله
   const closed = await invoke(db3, 'stockcount.closeMonth', { token: token3, periodYm: ym, note: 'إقفال تجريبي' })
   check('G7: إقفال الشهر ناجح', closed.ok === true, closed.error ?? '')

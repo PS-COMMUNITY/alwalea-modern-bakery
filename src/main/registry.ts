@@ -57,7 +57,7 @@ publicRoute('status.get', (ctx) => {
     setupCompleted,
     businessName: setupCompleted ? (ctx.db.get<{ v: string }>("SELECT value AS v FROM settings WHERE key = 'business_name'")?.v ?? null) : null,
     // rc.12-merge: محاذاة مع package.json (1.0.0-rc.12) — كانت السلسلة متأخرة عن الإصدار الفعلي
-    version: '1.0.0-rc.12',
+    version: '1.0.0-rc.13',
     schemaVersion: 1
   }
 })

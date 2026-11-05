@@ -48,8 +48,15 @@ const TABLES: string[] = [
   'expenses',
   'cash_movements',
   'period_close',
+  // rc.13 (إصلاح P0-4): جداول الجرد والإقفال في نظامي الجرد كانت ناقصة من النسخة —
+  // نسخة بلا month_closes تُعيد شهرًا مقفلًا إلى مفتوح (سقوط الحاجز المالي بعد الاستعادة)،
+  // ونسخة بلا stock_counts/stock_count_items تُفقد أوراق شاشة الجرد كليًا.
+  // الترتيب: month_closes بلا مراجع، ثم stock_counts قبل stock_count_items (FK).
+  'month_closes',
   'stock_count',
   'stock_count_item',
+  'stock_counts',
+  'stock_count_items',
   'distribution_reps',
   'distribution_routes',
   'distribution_trips',
@@ -532,6 +539,10 @@ export function restoreBackup(ctx: SvcCtx, payload: Record<string, unknown>): {
     // تحمل user_id يشير إليهم (كان إدخالهم في النهاية يفشل فور وجود أي فاتورة:
     // «FOREIGN KEY constraint failed» → «خطأ غير متوقع» وكانت الاستعادة معطوبة كليًا)
     for (const tb of [...TABLES].reverse()) {
+      // rc.13: جدول غائب عن ملف النسخة (نسخ v2 القديمة قبل إضافة جداول الجرد) لا يُمسّ —
+      // حذفه كان يمحو أقفال الشهور (month_closes) وأوراق الجرد القائمة عند استعادة نسخة أقدم.
+      // النسخ الجديدة تتضمن كل المفاتيح فلا يتغير سلوكها.
+      if (b.tables[tb] === undefined) continue
       ctx.db.run(`DELETE FROM ${tb}`)
     }
     // إدخال المستخدمين من الصفوف المحوَّلة (كلها ببيانات تحقق صالحة) — أي إخلال يُرجع المعاملة كاملة

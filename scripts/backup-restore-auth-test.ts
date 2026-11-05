@@ -156,9 +156,9 @@ async function main(): Promise<void> {
   check('فحص3: كل الهاشات 128-hex وكل الأملاح 32-hex', allUsers.every(u => /^[0-9a-f]{128}$/.test(u.password_hash) && /^[0-9a-f]{32}$/.test(u.password_salt)))
   check('المالك أُسندت له كلمة جديدة (اسم المالك مُعاد)', restore.data?.ownerResetUsername === 'owner', `ownerReset=${restore.data?.ownerResetUsername}`)
   check('الكاشير دُخل ببيانات اعتماد مقفلة (لا كلمة ثابتة)', restore.data?.lockedUsers === 1)
-  check('فحص5: دخول المالك بكلمة الجديدة 7788 ناجح بعد الاستعادة', invoke(db, 'auth.login', { password: '7788' }).ok === true)
-  check('فحص6: كلمة المالك القديمة 1234 ماتت بعد الاستعادة بالتعيين', invoke(db, 'auth.login', { password: '1234' }).ok === false)
-  check('فحص6: لا باب خلفي — لا كلمة تقفل المالك غير المعيّنة', invoke(db, 'auth.login', { password: 'cash9999' }).ok === false)
+  check('فحص5: دخول المالك بكلمة الجديدة 7788 ناجح بعد الاستعادة', (await invoke(db, 'auth.login', { password: '7788' })).ok === true)
+  check('فحص6: كلمة المالك القديمة 1234 ماتت بعد الاستعادة بالتعيين', (await invoke(db, 'auth.login', { password: '1234' })).ok === false)
+  check('فحص6: لا باب خلفي — لا كلمة تقفل المالك غير المعيّنة', (await invoke(db, 'auth.login', { password: 'cash9999' })).ok === false)
   check('جلسة المشغّل حُفظت بعد الاستعادة (sessionKept)', restore.data?.sessionKept === true)
   check('فحص7-جلسات: لا جلسات قديمة أُحييت من النسخة', Number(db.get<{ c: number }>('SELECT COUNT(*) AS c FROM sessions')?.c ?? -1) >= 1)
 
@@ -195,7 +195,7 @@ async function main(): Promise<void> {
   check('المعاينة: النسخة ذات الهاشات الصالحة authReady=true', prevLegacy.data?.auth?.authReady === true)
   const restoreLegacy = await invoke(db, 'backup.restore', { token, json: JSON.stringify(legacy) })
   check('استعادة نسخة ببيانات تحقق صالحة تتم بلا تعيين كلمة', restoreLegacy.ok === true, restoreLegacy.error ?? '')
-  check('بعد استعادة النسخة الصالحة: 1234 الأصلية تعمل (الحسابات كما كانت)', invoke(db, 'auth.login', { password: '1234' }).ok === true)
+  check('بعد استعادة النسخة الصالحة: 1234 الأصلية تعمل (الحسابات كما كانت)', (await invoke(db, 'auth.login', { password: '1234' })).ok === true)
   check('بعد استعادة النسخة الصالحة: لا هاش فارغ', Number(db.get<{ c: number }>("SELECT COUNT(*) AS c FROM users WHERE password_hash = '' OR password_salt = ''")?.c ?? -1) === 0)
   check('بعد استعادة النسخة الصالحة: العدادات المالية ما زالت مطابقة', (() => { const c = counts(db); return c.sales === before.sales && c.sale_items === before.sale_items && c.sale_payments === before.sale_payments })())
 
@@ -216,7 +216,7 @@ async function main(): Promise<void> {
   check('فحص4: استعادة نسخة تنكسر منتصف المعاملة (قيد UNIQUE) تفشل', restoreBroken.ok === false, restoreBroken.error?.slice(0, 80) ?? '')
   const snapAfterBroken = counts(db)
   check('فحص4: التراجع كامل — العدادات مطابقة تمامًا بعد الفشل (ولا الصفوف الإضافية)', JSON.stringify(snapAfterBroken) === JSON.stringify(snapBeforeBroken), JSON.stringify({ before: snapBeforeBroken, after: snapAfterBroken }))
-  check('فحص4: المصادقة سليمة بعد الفشل (الدخول بكلمة ما قبل الفشل يعمل)', invoke(db, 'auth.login', { password: '1234' }).ok === true)
+  check('فحص4: المصادقة سليمة بعد الفشل (الدخول بكلمة ما قبل الفشل يعمل)', (await invoke(db, 'auth.login', { password: '1234' })).ok === true)
 
   db.close()
   // تنظيف الملفات المؤقتة (نسخ الاختبار فقط — في /tmp)
