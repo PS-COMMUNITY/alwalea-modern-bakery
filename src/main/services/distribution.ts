@@ -19,6 +19,7 @@ import {
   nextDocNo
 } from './helpers'
 import { assertMonthOpen } from './period'
+import { assertNoActiveStockCount } from './helpers'
 
 // ---------- المندوبون والخطوط ----------
 export function listReps(ctx: SvcCtx, payload: Record<string, unknown>): unknown[] {
@@ -47,6 +48,42 @@ export function updateRep(ctx: SvcCtx, payload: Record<string, unknown>): { done
     ctx.db.run('UPDATE distribution_reps SET name = ?, phone = ?, active = ? WHERE id = ?', [name, phone, active, id])
     ctx.audit('distribution.rep_update', 'rep', id, null)
     return { done: true }
+  })
+}
+
+/**
+ * rc.12 — طلب المالك: حذف مندوب أُضيف بالخطأ — مسموح فقط إن لم يكن له جولات.
+ */
+export function deleteRep(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    const rep = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM distribution_reps WHERE id = ?', [id])
+    if (!rep) throw new ApiError('المندوب غير موجود', 404)
+    const used = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM distribution_trips WHERE rep_id = ?', [id])
+    if (Number(used?.c ?? 0) > 0) {
+      throw new ApiError(`لا يمكن حذف المندوب «${rep.name}» — مرتبط بـ${used?.c} جولة موثقة`, 409)
+    }
+    ctx.db.run('DELETE FROM distribution_reps WHERE id = ?', [id])
+    ctx.audit('distribution.rep.delete', 'distribution_rep', id, { name: rep.name })
+    return { id, deleted: true as const }
+  })
+}
+
+/**
+ * rc.12 — طلب المالك: حذف خط توزيع أُضيف بالخطأ — مسموح فقط إن لم يكن له جولات.
+ */
+export function deleteRoute(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    const route = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM distribution_routes WHERE id = ?', [id])
+    if (!route) throw new ApiError('خط التوزيع غير موجود', 404)
+    const used = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM distribution_trips WHERE route_id = ?', [id])
+    if (Number(used?.c ?? 0) > 0) {
+      throw new ApiError(`لا يمكن حذف الخط «${route.name}» — مرتبط بـ${used?.c} جولة موثقة`, 409)
+    }
+    ctx.db.run('DELETE FROM distribution_routes WHERE id = ?', [id])
+    ctx.audit('distribution.route.delete', 'distribution_route', id, { name: route.name })
+    return { id, deleted: true as const }
   })
 }
 
@@ -159,6 +196,8 @@ export function addLoad(ctx: SvcCtx, payload: Record<string, unknown>): Record<s
     const trip = requireTrip(ctx, tripId)
     if (trip.status !== 'OPEN') throw new ApiError('لا يمكن التحميل إلا لجولة مفتوحة', 409)
     // حاجز الشهر المقفل: تحميل جولة يخصم مخزون بتاريخ الآن
+    // rc.12 (P0-1): صريح عند المدخل — تحميل جولة بلا حركات أثناء جرد نشط
+    assertNoActiveStockCount(ctx.db)
     assertMonthOpen(ctx.db, new Date())
     addTripLoad(ctx, tripId, trip.trip_no, productId, qtyMilli, trip.date)
     ctx.audit('distribution.trip_load', 'trip', tripId, { productId, qtyMilli })
@@ -414,6 +453,8 @@ export function settleTrip(ctx: SvcCtx, payload: Record<string, unknown>): Recor
     if (trip.status === 'SETTLED') throw new ApiError('الجولة مسواة مسبقًا — لا يمكن مضاعفة الترحيل', 409)
     if (trip.status !== 'OPEN') throw new ApiError('الجولة غير مفتوحة', 409)
     // حاجز الشهر المقفل: التسوية ترحّل فواتير ونقدًا بتاريخ الآن
+    // rc.12 (P0-1): صريح عند المدخل — تسوية جولة بلا حركات أثناء جرد نشط
+    assertNoActiveStockCount(db)
     assertMonthOpen(db, new Date())
 
     const sales = db.query<{ id: number; product_id: number; qty_milli: number; unit_price_minor: number; payment_type: string; customer_id: number | null }>(

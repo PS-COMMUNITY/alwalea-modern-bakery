@@ -13,6 +13,7 @@ import {
   currentShiftId
 } from './helpers'
 import { assertMonthOpen } from './period'
+import { assertNoActiveStockCount } from './helpers'
 
 interface PurchaseLine {
   productId: number
@@ -49,6 +50,8 @@ export function createPurchase(ctx: SvcCtx, payload: Record<string, unknown>): R
       if (existing) return getPurchase(ctx, { id: Number(existing.id) })
     }
     // حاجز الشهر المقفل: بتاريخ الفاتورة — بعد فحص clientRef وقبل المعالجة
+    // rc.12 (P0-1): صريح عند المدخل — شراء بلا حركات أثناء جرد نشط
+    assertNoActiveStockCount(db)
     assertMonthOpen(db, date)
     const supplier = db.get('SELECT id, name FROM suppliers WHERE id = ?', [supplierId])
     if (!supplier) throw new ApiError('المورد غير موجود', 404)
@@ -195,6 +198,7 @@ export function cancelPurchase(ctx: SvcCtx, payload: Record<string, unknown>): R
     if (p.status === 'CANCELLED') throw new ApiError('فاتورة الشراء ملغاة مسبقًا', 409)
     // حاجز الشهر المقفل: بتاريخ الفاتورة الأصلية — بعد جلب السجل وقبل أي كتابة
     assertMonthOpen(ctx.db, p.date)
+    assertNoActiveStockCount(ctx.db)
 
     // تحقق إمكانية الإرجاع (لا مخزون سالب عند الإلغاء)
     for (const item of p.items) {

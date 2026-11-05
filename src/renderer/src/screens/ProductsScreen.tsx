@@ -116,6 +116,21 @@ export default function ProductsScreen(): ReactNode {
     }
   }
 
+  const deleteProduct = async (p: ProductUI): Promise<void> => {
+    if (!window.confirm(`حذف المنتج «${p.name}» نهائيًا؟\n\nالحذف مسموح فقط لمنتج بلا أي حركات (بيع/شراء/إنتاج/جرد) — إن كان له أثر سيُرفض ويُقترح التعطيل.`)) return
+    setBusy(true)
+    setError('')
+    try {
+      await call('products.delete', { id: p.id })
+      setNotice(`تم حذف المنتج «${p.name}»`)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const toggleActive = async (p: ProductUI): Promise<void> => {
     setBusy(true)
     setError('')
@@ -197,7 +212,12 @@ export default function ProductsScreen(): ReactNode {
                   </button>{' '}
                   <button className={`btn small ${p.active === 1 ? 'danger' : 'ghost'}`} disabled={busy} onClick={() => void toggleActive(p)}>
                     {p.active === 1 ? 'تعطيل' : 'تنشيط'}
-                  </button>
+                  </button>{' '}
+                  {p.active === 0 ? (
+                    <button className="btn danger small" onClick={() => void deleteProduct(p)} title="حذف نهائي (لمن بلا حركات)">
+                      حذف
+                    </button>
+                  ) : null}
                 </td>
               </tr>
             ))}

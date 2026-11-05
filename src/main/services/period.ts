@@ -7,7 +7,7 @@
 import { ApiError, reqStr, optStr, reqInt, obj } from '../validate'
 import type { PeriodRow, StockCountRow, StockCountItemRow, CountVarianceRow } from '../../shared/types'
 import { MONTH_LOCKED_MESSAGE, monthKeyOf, isValidMonthKey } from '../../shared/period'
-import { SvcCtx, addStockMovement, stockBalance } from './helpers'
+import { SvcCtx, addStockMovement, stockBalance, activeStockCount } from './helpers'
 import type { BakeryDb } from '../db'
 
 export { MONTH_LOCKED_MESSAGE, monthKeyOf, isValidMonthKey }
@@ -199,6 +199,11 @@ export function createCount(
   const month = payload.month === undefined || payload.month === null || payload.month === '' ? monthKeyOf(new Date()) : reqMonth(payload.month)
   const note = optStr(payload.note, 'ملاحظة', 300)
   return ctx.db.tx(() => {
+    // rc.12 (P0-1): لا جردان نشطان معًا — جرد واحد بكل لحظة حتى تكون اللقطة متسقة
+    const existing = activeStockCount(ctx.db)
+    if (existing) {
+      throw new ApiError(`يوجد جرد نشط بالفعل (${existing.count_no}) — اعتمده أو احذفه قبل بدء جرد جديد`, 409)
+    }
     // حاجز الشهر المقفل: الاعتماد لاحقًا يكتب حركات بتاريخ الآن — الشهر الحالي مطلوب مفتوحًا
     assertMonthOpen(ctx.db, new Date())
     if (isMonthLocked(ctx.db, month)) throw new ApiError(MONTH_LOCKED_MESSAGE, 423)
@@ -299,6 +304,12 @@ export function approveCount(
     )
     const diffs = items.filter((i) => i.counted_qty_milli !== null && Number(i.counted_qty_milli) !== Number(i.system_qty_milli))
 
+    ctx.db.run(
+      `UPDATE stock_count SET status = 'APPROVED', approved_at = ?, approved_by_user_id = ?, approved_by_name = ? WHERE id = ?`,
+      [ctx.db.now(), ctx.user?.id ?? null, ctx.user?.name ?? null, id]
+    )
+    // rc.12: تغيير الحالة أولًا ثم كتابة حركات الفروق — حتى لا يحجب حاجز الجرد النشط
+    // حركات الاعتماد نفسها (والحاجز يستثني refType='StockCount' ضمانًا مضاعفًا)
     let diffValueMinor = 0
     for (const i of diffs) {
       const diff = Number(i.counted_qty_milli) - Number(i.system_qty_milli)
@@ -314,10 +325,6 @@ export function approveCount(
       })
     }
 
-    ctx.db.run(
-      `UPDATE stock_count SET status = 'APPROVED', approved_at = ?, approved_by_user_id = ?, approved_by_name = ? WHERE id = ?`,
-      [ctx.db.now(), ctx.user?.id ?? null, ctx.user?.name ?? null, id]
-    )
     ctx.audit('STOCK_COUNT_APPROVE', 'StockCount', id, {
       countNo: c.count_no,
       month: c.month,
@@ -327,6 +334,36 @@ export function approveCount(
       note
     })
     return { id, countNo: c.count_no, status: 'APPROVED', approvedAt: ctx.db.now(), adjustmentMovements: diffs.length, diffValueMinor }
+  })
+}
+
+/**
+ * rc.12 — حذف/إلغاء مسودة جرد (DRAFT فقط):
+ * الوسيلة الشرعية الوحيدة لفك قفل الجرد النشط دون اعتماد — حذف الورقة وبنودها بالكامل.
+ * ورقة معتمدة لا تُحذف أبدًا (بيانات مالية موثقة بحركات ADJUSTMENT).
+ */
+export function cancelCount(
+  ctx: SvcCtx,
+  payload: Record<string, unknown>
+): { id: number; countNo: string; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  const reason = optStr(payload.reason, 'السبب', 300)
+  return ctx.db.tx(() => {
+    const c = ctx.db.get<{ id: number; count_no: string; status: string; month: string }>(
+      'SELECT id, count_no, status, month FROM stock_count WHERE id = ?',
+      [id]
+    )
+    if (!c) throw new ApiError('ورقة الجرد غير موجودة', 404)
+    if (c.status !== 'DRAFT') {
+      throw new ApiError('لا يمكن حذف ورقة جرد معتمدة — الاعتماد كتب حركات تسوية موثقة تبقى في السجل', 409)
+    }
+    // حاجز الشهر المقفل: حذف جرد داخل شهر مقفل ممنوع (تعديل رجعي)
+    if (isMonthLocked(ctx.db, c.month)) throw new ApiError(MONTH_LOCKED_MESSAGE, 423)
+    assertMonthOpen(ctx.db, new Date())
+    ctx.db.run('DELETE FROM stock_count_item WHERE count_id = ?', [id])
+    ctx.db.run('DELETE FROM stock_count WHERE id = ?', [id])
+    ctx.audit('STOCK_COUNT_CANCEL', 'StockCount', id, { countNo: c.count_no, month: c.month, reason: reason ?? null })
+    return { id, countNo: c.count_no, deleted: true as const }
   })
 }
 

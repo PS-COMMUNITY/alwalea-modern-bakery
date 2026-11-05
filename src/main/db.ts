@@ -9,6 +9,7 @@ import initSqlJs from 'sql.js'
 import type { BindParams, Database, QueryExecResult } from 'sql.js'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { ApiError } from './validate'
 
 // ملاحظة: يُبنى هذا الملف إلى CJS عبر esbuild — __dirname = dist-electron/ (متاح من @types/node)
 
@@ -19,11 +20,18 @@ export interface DbConfig {
   wasmCandidates: string[]
 }
 
+export const PERSIST_FAILED_MESSAGE =
+  'فشل حفظ البيانات على القرص — التغييرات الحديثة موجودة في الذاكرة فقط ولم تُثبّت في الملف. ' +
+  'أصلح السبب (مساحة القرص/الصلاحيات) ثم اضغط «إعادة المحاولة للحفظ» في شاشة الإعدادات — وحتى ذلك الحين ستُرفض أي عملية كتابة جديدة حمايةً لبياناتك (كود 507)'
+
 export class BakeryDb {
   private db: Database | null = null
   private inTx = false
   private dirty = false
   private persistFn: () => void = () => {}
+  // rc.12 (P0-5): حالة فشل الحفظ على القرص — كتابة مُتعهدة في الذاكرة بلا تثبيت ملفي
+  private persistFailed = false
+  private lastPersistError: string | null = null
 
   constructor(private readonly cfg: DbConfig) {}
 
@@ -171,13 +179,21 @@ export class BakeryDb {
     }
     const db = this.requireDb()
     this.inTx = true
+    // rc.12 (P0-5): حاجز الكتابة أثناء حالة فشل الحفظ — منع تراكم تغييرات غير مثبتة
+    this.assertPersistOk()
     db.run('BEGIN')
     try {
       const r = fn()
       db.run('COMMIT')
       this.inTx = false
       this.dirty = true
-      this.persistFn() // حفظ ذري فوري بعد كل معاملة كتابية
+      // rc.12 (P0-5): فشل الحفظ بعد COMMIT لا يُرمي (المعاملة انتهت فعلًا)
+      // بل يسجّل حالة فشل تمنع الكتابات الجديدة حتى إعادة المحاولة الناجحة.
+      try {
+        this.persistFn() // حفظ ذري فوري بعد كل معاملة كتابية
+      } catch (e) {
+        this.markPersistFailed(e)
+      }
       return r
     } catch (e) {
       try {
@@ -187,6 +203,39 @@ export class BakeryDb {
       }
       this.inTx = false
       throw e
+    }
+  }
+
+  // ---------- حالة فشل الحفظ (rc.12 — P0-5) ----------
+
+  /** حاجز الكتابات: إذا فشل تثبيت بيانات سابقة على القرص فلا كتابات جديدة أبدًا */
+  assertPersistOk(): void {
+    if (this.persistFailed) {
+      throw new ApiError(PERSIST_FAILED_MESSAGE, 507)
+    }
+  }
+
+  private markPersistFailed(e: unknown): void {
+    this.persistFailed = true
+    this.lastPersistError = e instanceof Error ? e.message : String(e)
+  }
+
+  /** حالة الحفظ للعرض في الواجهة */
+  persistStatus(): { persistFailed: boolean; lastPersistError: string | null; dirty: boolean; filePath: string } {
+    return { persistFailed: this.persistFailed, lastPersistError: this.lastPersistError, dirty: this.dirty, filePath: this.cfg.filePath }
+  }
+
+  /** إعادة محاولة الحفظ بعد إصلاح السبب — يزيل القفل عند النجاح */
+  retryPersist(): { ok: boolean; error: string | null } {
+    if (!this.persistFailed && !this.dirty) return { ok: true, error: null }
+    try {
+      this.persist()
+      this.persistFailed = false
+      this.lastPersistError = null
+      return { ok: true, error: null }
+    } catch (e) {
+      this.markPersistFailed(e)
+      return { ok: false, error: this.lastPersistError }
     }
   }
 

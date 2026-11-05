@@ -170,6 +170,29 @@ export default function ExpensesScreen(props: { user: SessionUser }): ReactNode 
             ))}
           </select>
         </div>
+        {canManage && categoryId ? (
+          <button
+            className="btn danger"
+            title="حذف الفئة المختارة (فقط إن كانت فارغة من المصروفات)"
+            onClick={async () => {
+              const cat = cats.find((c) => String(c.id) === categoryId)
+              if (!cat) return
+              if (!window.confirm(`حذف فئة المصروفات «${cat.name}» نهائيًا؟ الحذف مسموح فقط لفئة فارغة من المصروفات.`)) return
+              setError('')
+              try {
+                await call('expenses.categories.delete', { id: cat.id })
+                setCategoryId('')
+                setNotice(`تم حذف الفئة «${cat.name}»`)
+                const list = await call<Array<{ id: number; name: string; active: number }>>('expenses.categories.list', {})
+                setCats(list)
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e))
+              }
+            }}
+          >
+            🗑 حذف الفئة المختارة
+          </button>
+        ) : null}
         {canManage ? (
           <button className="btn primary" onClick={openCreate}>
             ＋ مصروف جديد

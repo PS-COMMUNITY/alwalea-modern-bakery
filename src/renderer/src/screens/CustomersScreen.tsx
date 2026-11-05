@@ -73,6 +73,18 @@ export default function CustomersScreen(): ReactNode {
     }
   }
 
+  const deleteCustomer = async (c: CustomerUI): Promise<void> => {
+    if (!window.confirm(`حذف العميل «${c.name}» نهائيًا؟\n\nالحذف مسموح فقط لعميل بلا أي قيود أو فواتير — إن كان له أثر محاسبي سيُرفض الحذف ويُقترح التعطيل.`)) return
+    setError('')
+    try {
+      await call('customers.delete', { id: c.id })
+      setNotice(`تم حذف العميل «${c.name}»`)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const openStatement = async (c: CustomerUI): Promise<void> => {
     setError('')
     try {
@@ -172,6 +184,9 @@ export default function CustomersScreen(): ReactNode {
                     }
                   >
                     تعديل
+                  </button>{' '}
+                  <button className="btn danger small" onClick={() => void deleteCustomer(c)} title="حذف نهائي (لمن بلا حركات)">
+                    حذف
                   </button>
                 </td>
               </tr>

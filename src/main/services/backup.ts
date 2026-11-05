@@ -10,8 +10,13 @@ import { randomBytes } from 'node:crypto'
 import { ApiError, reqStr } from '../validate'
 import { SvcCtx } from './helpers'
 import { hashPassword, makeSalt } from './auth'
+import { openFolder } from '../platform'
 
-const BACKUP_SCHEMA_VERSION = 1
+// rc.12 (إصلاح P0-3): رفع الإصدار — يغطي الآن جداول الجرد والإقفال كاملة.
+// نسخ الإصدار 1 (قبل rc.12) تُرفض عند الاستعادة حمايةً لبياناتك: كانت بلا جداول
+// stock_count / stock_count_item / period_close، واستعادتها كانت ستحذف بيانات الجرد الحالية
+// أو تفشل بمفاتيح أجنبية — الرسالة توجه لإنشاء نسخة جديدة من التطبيق الحالي.
+const BACKUP_SCHEMA_VERSION = 2
 
 // الجداول المصدَّرة بالترتيب (الآباء قبل الأبناء للاستعادة)
 const TABLES: string[] = [
@@ -40,6 +45,9 @@ const TABLES: string[] = [
   'expenses',
   'shifts',
   'cash_movements',
+  'period_close',
+  'stock_count',
+  'stock_count_item',
   'distribution_reps',
   'distribution_routes',
   'distribution_trips',
@@ -50,10 +58,17 @@ const TABLES: string[] = [
   'backup_records'
 ]
 
+// rc.12 (إصلاح P1-4): الأسرار لا تُصدَّر في ملف النسخة القابل للتداول أبدًا —
+// أي مفتاح إعدادات مطابق يُحذف من التصدير ويُطلب إدخاله مجددًا بعد الاستعادة.
+const SECRET_SETTING_KEYS = new Set(['telegram_bot_token'])
+const SECRET_KEY_RE = /token|secret|password|api_key|apikey/i
+
 interface BackupFile {
   app: string
   schemaVersion: number
   exportedAt: string
+  /** rc.12: المفاتيح السرّية التي استُثنيت من جدول settings (لا قيم لها في الملف أبدًا) */
+  redactedSettingsKeys?: string[]
   tables: Record<string, unknown[]>
 }
 
@@ -85,16 +100,27 @@ function backupsDir(ctx: SvcCtx): string {
 
 export function exportBackup(ctx: SvcCtx, payload: Record<string, unknown>, opts?: { auto?: boolean }): { path: string; sizeBytes: number; schemaVersion: number; exportedAt: string } {
   const note = optNote(payload)
+  const redactedSettingsKeys: string[] = []
   const data: BackupFile = {
     app: 'alwalea-modern-bakery',
     schemaVersion: BACKUP_SCHEMA_VERSION,
     exportedAt: ctx.db.now(),
+    redactedSettingsKeys,
     tables: {}
   }
   for (const t of TABLES) {
     let rows: Row[] = ctx.db.query<Row>(`SELECT * FROM ${t}`)
     if (t === 'users') rows = rows.map(sanitizeUserForExport)
     if (t === 'sessions') rows = [] // الجلسات لا تُصدَّر أبدًا — رموز حية لا مكان لها في ملف قابل للتداول
+    if (t === 'settings') {
+      // rc.12 (إصلاح P1-4): الأسرار لا تخرج من التطبيق نهائيًا — حذفها من النسخة (لا تمويه)
+      rows = rows.filter((r) => {
+        const k = typeof r.key === 'string' ? r.key : ''
+        const secret = SECRET_SETTING_KEYS.has(k) || SECRET_KEY_RE.test(k)
+        if (secret) redactedSettingsKeys.push(k)
+        return !secret
+      })
+    }
     data.tables[t] = rows
   }
   const dir = backupsDir(ctx)
@@ -126,6 +152,42 @@ function optNote(payload: Record<string, unknown>): string | null {
 
 export function listBackups(ctx: SvcCtx): unknown[] {
   return ctx.db.query('SELECT id, created_at, path, size_bytes, schema_version, note FROM backup_records ORDER BY id DESC LIMIT 100')
+}
+
+/**
+ * rc.12 — ملاحظة المالك: «النسخ الاحتياطي داخل الجهاز لما بدي أرجع لنسخة ما بجدها» —
+ * هذه الواجهة تجعل مجلد النسخ مكشوفًا بالكامل: المسار + كل ملفات النسخ الفعلية على القرص.
+ */
+export function backupFolderInfo(ctx: SvcCtx): { dir: string; exists: boolean; dbPath: string; files: Array<{ name: string; sizeBytes: number; modifiedAt: string }> } {
+  const dir = backupsDir(ctx)
+  let exists = false
+  const files: Array<{ name: string; sizeBytes: number; modifiedAt: string }> = []
+  try {
+    exists = fs.existsSync(dir)
+    if (exists) {
+      for (const f of fs.readdirSync(dir)) {
+        try {
+          const st = fs.statSync(path.join(dir, f))
+          if (st.isFile()) {
+            files.push({ name: f, sizeBytes: st.size, modifiedAt: st.mtime.toISOString() })
+          }
+        } catch {
+          // ملف اختفى أثناء القراءة — تجاهل
+        }
+      }
+    }
+  } catch {
+    exists = false
+  }
+  files.sort((a, b) => b.name.localeCompare(a.name))
+  return { dir, exists, dbPath: ctx.db.filePath, files: files.slice(0, 200) }
+}
+
+/** فتح مجلد النسخ في مدير ملفات النظام (نافذة حقيقية يراها المالك) */
+export function openBackupsFolder(ctx: SvcCtx): { ok: boolean; dir: string; error?: string } {
+  const dir = backupsDir(ctx)
+  fs.mkdirSync(dir, { recursive: true })
+  return { dir, ...openFolder(dir) }
 }
 
 // =============================================================
@@ -254,6 +316,14 @@ function parseBackup(json: string): BackupFile {
     throw new ApiError('الملف ليس نسخة احتياطية صالحة لهذا التطبيق')
   }
   if (b.schemaVersion !== BACKUP_SCHEMA_VERSION) {
+    if (Number(b.schemaVersion) === 1) {
+      throw new ApiError(
+        'النسخة من مخطط قديم (إصدار 1 — قبل تكامل الجرد والإقفال في النسخ الاحتياطي): ' +
+        'استعادتها كانت ستفقد بيانات الجرد الحالية، لذا رُفضت حمايةً لبياناتك. ' +
+        'أنشئ نسخة احتياطية جديدة من هذا الإصدار (rc.12+) واستعدها منها',
+        409
+      )
+    }
     throw new ApiError(`إصدار مخطط النسخة (${String(b.schemaVersion)}) غير متوافق مع إصدار التطبيق (${BACKUP_SCHEMA_VERSION})`)
   }
   return b as BackupFile

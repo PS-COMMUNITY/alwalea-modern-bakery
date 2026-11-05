@@ -144,7 +144,32 @@ export function customerPayment(ctx: SvcCtx, payload: Record<string, unknown>): 
   })
 }
 
-/** تسوية يدوية موقعة على دفتر العميل (بدون نقد) */
+/**
+ * rc.12 — طلب المالك: حذف عميل أُضيف بالخطأ.
+ * حذف نهائي فقط إن لم يكن له أي أثر مالي/مبيعات إطلاقًا —
+ * وإلا يُرفض بأسماء الأسباب (الدفتر/فواتير/جولات) ويُقترح التعطيل.
+ */
+export function deleteCustomer(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    getCustomer(ctx, { id })
+    const reasons: string[] = []
+    const ledger = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM customer_ledger WHERE customer_id = ?', [id])
+    if (Number(ledger?.c ?? 0) > 0) reasons.push(`قيود دفتر (${ledger?.c})`)
+    const sales = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM sales WHERE customer_id = ?', [id])
+    if (Number(sales?.c ?? 0) > 0) reasons.push(`فواتير بيع (${sales?.c})`)
+    const trips = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM trip_sales WHERE customer_id = ?', [id])
+    if (Number(trips?.c ?? 0) > 0) reasons.push(`مبيعات جولات (${trips?.c})`)
+    if (reasons.length > 0) {
+      throw new ApiError(`لا يمكن حذف العميل — له أثر محاسبي موثق: ${reasons.join('، ')}. استخدم «تعطيل» بدلًا من الحذف`, 409)
+    }
+    ctx.db.run('DELETE FROM customers WHERE id = ?', [id])
+    ctx.audit('customer.delete', 'customer', id, null)
+    return { id, deleted: true as const }
+  })
+}
+
+/** rc.12 — تسوية يدوية موقعة على دفتر العميل (بدون نقد) */
 export function customerAdjust(ctx: SvcCtx, payload: Record<string, unknown>): { balanceMinor: number } {
   const id = reqInt(payload.customerId, 'العميل', 1)
   const amountMinor = reqInt(payload.amountMinor, 'المبلغ الموقع', -1_000_000_000, 1_000_000_000)
@@ -243,7 +268,29 @@ export function supplierStatement(ctx: SvcCtx, payload: Record<string, unknown>)
   return { supplier, rows: ledger, balanceMinor: supplierBalance(ctx.db, id) }
 }
 
-/** دفعة لمورد: تخصم من دفتره وتخرج من الصندوق */
+/**
+ * rc.12 — طلب المالك: حذف مورد أُضيف بالخطأ.
+ * حذف نهائي فقط إن لم يكن له أي أثر مالي/مشتريات — وإلا يُرفض ويُقترح التعطيل.
+ */
+export function deleteSupplier(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    getSupplier(ctx, { id })
+    const reasons: string[] = []
+    const ledger = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM supplier_ledger WHERE supplier_id = ?', [id])
+    if (Number(ledger?.c ?? 0) > 0) reasons.push(`قيود دفتر (${ledger?.c})`)
+    const purchases = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM purchases WHERE supplier_id = ?', [id])
+    if (Number(purchases?.c ?? 0) > 0) reasons.push(`فواتير شراء (${purchases?.c})`)
+    if (reasons.length > 0) {
+      throw new ApiError(`لا يمكن حذف المورد — له أثر محاسبي موثق: ${reasons.join('، ')}. استخدم «تعطيل» بدلًا من الحذف`, 409)
+    }
+    ctx.db.run('DELETE FROM suppliers WHERE id = ?', [id])
+    ctx.audit('supplier.delete', 'supplier', id, null)
+    return { id, deleted: true as const }
+  })
+}
+
+/** rc.12 — دفعة لمورد: تخصم من دفتره وتخرج من الصندوق */
 export function supplierPayment(ctx: SvcCtx, payload: Record<string, unknown>): { balanceMinor: number } {
   const id = reqInt(payload.supplierId, 'المورد', 1)
   const amountMinor = reqMinor(payload.amountMinor, 'المبلغ')

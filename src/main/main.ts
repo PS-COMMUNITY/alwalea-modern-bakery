@@ -9,6 +9,7 @@ import { BakeryDb, wasmCandidatesFor } from './db'
 import { dispatch } from './registry'
 import { autoBackupOnQuit, autoBackupDue, autoBackupScheduled } from './services/backup'
 import { telegramDailyIfDue } from './services/telegram'
+import { setShellOpener } from './platform'
 import { isIpcChannel } from '../shared/types'
 import type { ApiEnvelope } from '../shared/types'
 
@@ -102,6 +103,9 @@ async function openDatabase(): Promise<BakeryDb> {
   bakeryDb.setPersistFn(() => bakeryDb.persist())
   return bakeryDb
 }
+
+// rc.12: حقن فتّاح المجلدات (زر «فتح مجلد النسخ الاحتياطي» في الإعدادات)
+setShellOpener((p) => shell.openPath(p))
 
 function createWindow(): void {
   const win = new BrowserWindow({

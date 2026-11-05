@@ -4,7 +4,7 @@
 // =============================================================
 import { ApiError, reqStr, optStr, reqInt, reqMilli, reqMinor, reqEnum, reqArr, obj } from '../validate'
 import type { InventoryBalanceRow, StockMovementRow } from '../../shared/types'
-import { SvcCtx, addStockMovement, assertStock, stockBalance } from './helpers'
+import { SvcCtx, addStockMovement, assertStock, stockBalance, assertNoActiveStockCount } from './helpers'
 import { assertMonthOpen } from './period'
 
 const MOVEMENT_TYPES = ['OPENING', 'PURCHASE', 'SALE', 'SALE_RETURN', 'PURCHASE_RETURN', 'PRODUCTION_IN', 'PRODUCTION_OUT', 'WASTE', 'ADJUSTMENT', 'TRIP_OUT', 'TRIP_RETURN'] as const
@@ -86,6 +86,8 @@ export function opening(ctx: SvcCtx, payload: Record<string, unknown>): { done: 
   })
   return ctx.db.tx(() => {
     // حاجز الشهر المقفل: رصيد افتتاحي بتاريخ الآن
+    // rc.12 (P0-1): صريح عند المدخل — لا تعديل مخزون أثناء جرد نشط
+    assertNoActiveStockCount(ctx.db)
     assertMonthOpen(ctx.db, new Date())
     let count = 0
     for (const it of items) {
@@ -120,6 +122,8 @@ export function adjust(ctx: SvcCtx, payload: Record<string, unknown>): { product
   const reason = reqStr(payload.reason, 'سبب الجرد', 300)
   return ctx.db.tx(() => {
     // حاجز الشهر المقفل: جرد/تسوية مخزون بتاريخ الآن
+    // rc.12 (P0-1): صريح عند المدخل — لا تعديل مخزون أثناء جرد نشط
+    assertNoActiveStockCount(ctx.db)
     assertMonthOpen(ctx.db, new Date())
     const p = ctx.db.get<{ id: number; name: string; track_stock: number }>('SELECT id, name, track_stock FROM products WHERE id = ?', [productId])
     if (!p) throw new ApiError('المنتج غير موجود', 404)
@@ -148,6 +152,8 @@ export function waste(ctx: SvcCtx, payload: Record<string, unknown>): { done: bo
   const reason = reqStr(payload.reason, 'السبب', 300)
   return ctx.db.tx(() => {
     // حاجز الشهر المقفل: إعدام مخزون بتاريخ الآن
+    // rc.12 (P0-1): صريح عند المدخل — لا تعديل مخزون أثناء جرد نشط
+    assertNoActiveStockCount(ctx.db)
     assertMonthOpen(ctx.db, new Date())
     const p = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM products WHERE id = ?', [productId])
     if (!p) throw new ApiError('المنتج غير موجود', 404)

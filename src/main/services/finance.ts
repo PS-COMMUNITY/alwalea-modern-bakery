@@ -32,6 +32,24 @@ export function createExpenseCategory(ctx: SvcCtx, payload: Record<string, unkno
   })
 }
 
+/**
+ * rc.12 — طلب المالك: حذف فئة مصروفات أُضيفت بالخطأ — مسموح فقط إن كانت فارغة.
+ */
+export function deleteExpenseCategory(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    const cat = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM expense_categories WHERE id = ?', [id])
+    if (!cat) throw new ApiError('فئة المصروفات غير موجودة', 404)
+    const used = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM expenses WHERE category_id = ?', [id])
+    if (Number(used?.c ?? 0) > 0) {
+      throw new ApiError(`لا يمكن حذف الفئة «${cat.name}» — تضمّن ${used?.c} مصروفًا موثقًا`, 409)
+    }
+    ctx.db.run('DELETE FROM expense_categories WHERE id = ?', [id])
+    ctx.audit('expense_category.delete', 'expense_category', id, { name: cat.name })
+    return { id, deleted: true as const }
+  })
+}
+
 export function listExpenses(ctx: SvcCtx, payload: Record<string, unknown>): unknown[] {
   const from = optStr(payload.from, 'من', 10)
   const to = optStr(payload.to, 'إلى', 10)

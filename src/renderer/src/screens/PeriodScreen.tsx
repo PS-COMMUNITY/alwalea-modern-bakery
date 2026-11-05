@@ -149,6 +149,19 @@ export default function PeriodScreen(props: { user: SessionUser }): ReactNode {
     }
   }
 
+  const cancelDraft = async (c: { id: number; count_no: string }): Promise<void> => {
+    if (!window.confirm(`حذف مسودة الجرد «${c.count_no}» نهائيًا؟\n\nهذه هي الطريقة لفك قفل الجرد النشط دون اعتماد — ستعود الحركات المخزنية للعمل عاديًا. الورقة وبنودها يُحذفون ولا تُكتب أي حركات.`)) return
+    setError('')
+    try {
+      await call('counts.cancel', { id: c.id })
+      setNotice(`تم حذف مسودة الجرد «${c.count_no}» — الحركات المخزنية تعمل الآن طبيعيًا`)
+      setDetail(null)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const submitApprove = async (): Promise<void> => {
     if (!approveFor) return
     setBusy(true)
@@ -260,6 +273,11 @@ export default function PeriodScreen(props: { user: SessionUser }): ReactNode {
                     <button className="btn ghost small" onClick={() => void openDetail(c.id)}>
                       تفاصيل
                     </button>{' '}
+                    {c.status === 'DRAFT' && canManage ? (<>
+                      <button className="btn danger small" onClick={() => void cancelDraft(c)} title="حذف المسودة وفك القفل">
+                        حذف
+                      </button>{' '}
+                    </>) : null}
                     <button className="btn small" onClick={() => void openVariance(c.id)}>
                       تقرير الفروق
                     </button>
@@ -440,7 +458,7 @@ export default function PeriodScreen(props: { user: SessionUser }): ReactNode {
                 {busy ? 'جارٍ الحفظ…' : 'حفظ الكميات'}
               </button>
             ) : null}
-            {detail.status === 'DRAFT' && canManage ? (
+            {detail.status === 'DRAFT' && canManage ? (<>
               <button
                 className="btn danger"
                 disabled={busy}
@@ -450,8 +468,11 @@ export default function PeriodScreen(props: { user: SessionUser }): ReactNode {
                 }}
               >
                 اعتماد وترحيل الفروق
+              </button>{' '}
+              <button className="btn ghost" onClick={() => void cancelDraft(detail)} title="حذف المسودة وفك قفل الجرد دون ترحيل">
+                حذف المسودة
               </button>
-            ) : null}
+            </>) : null}
             <button className="btn ghost" onClick={() => void openVariance(detail.id)}>
               تقرير الفروق
             </button>

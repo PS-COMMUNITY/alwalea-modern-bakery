@@ -80,7 +80,13 @@ export function updateSettings(ctx: SvcCtx, payload: Record<string, unknown>): A
         setSetting(ctx.db, k, t.trim())
       }
     }
-    ctx.audit('settings.update', 'settings', null, input)
+    // rc.12 (P1-4): التدقيق يوثق أسماء المفاتيح المحدثة فقط — قيم الأسرار لا تُخزن أبدًا
+    // (اكتشف بجناح QA: تفاصيل الحدث كانت تحمل توكن تيليجرام خامًا داخل audit_log)
+    const auditSafe: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(input)) {
+      auditSafe[k] = k === 'telegram_bot_token' || /token|secret|password/i.test(k) ? '***' : v
+    }
+    ctx.audit('settings.update', 'settings', null, auditSafe)
   })
   return getSettings(ctx)
 }

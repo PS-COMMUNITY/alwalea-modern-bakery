@@ -1,7 +1,7 @@
 {
   "name": "alwalea-modern-bakery",
   "productName": "Alwalea Modern Bakery",
-  "version": "1.0.0-rc.11",
+  "version": "1.0.0-rc.12",
   "description": "نظام إدارة مخبز الولاء الحديث — إلكترون دسكتوب (SQLite عبر sql.js WASM)",
   "main": "dist-electron/main.js",
   "private": true,

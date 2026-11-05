@@ -134,6 +134,32 @@ export default function DistributionScreen(props: { user: SessionUser }): ReactN
 
   const canManage = props.user.perms.includes('distribution.manage')
 
+  const deleteRep = async (r: { id: number; name: string }): Promise<void> => {
+    if (!window.confirm(`حذف المندوب «${r.name}» نهائيًا؟ الحذف مسموح فقط لمندوب بلا جولات موثقة.`)) return
+    setError('')
+    try {
+      await call('distribution.reps.delete', { id: r.id })
+      setNotice(`تم حذف المندوب «${r.name}»`)
+      const repsList = await call<Array<{ id: number; name: string; phone: string | null; active: number }>>('distribution.reps.list', {})
+      setReps(repsList)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const deleteRoute = async (r: { id: number; name: string }): Promise<void> => {
+    if (!window.confirm(`حذف خط التوزيع «${r.name}» نهائيًا؟ الحذف مسموح فقط لخط بلا جولات موثقة.`)) return
+    setError('')
+    try {
+      await call('distribution.routes.delete', { id: r.id })
+      setNotice(`تم حذف الخط «${r.name}»`)
+      const routesList = await call<Array<{ id: number; name: string; note: string | null; active: number }>>('distribution.routes.list', {})
+      setRoutes(routesList)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const load = useCallback(async (): Promise<void> => {
     setError('')
     try {
@@ -440,6 +466,7 @@ export default function DistributionScreen(props: { user: SessionUser }): ReactN
                   <th>الاسم</th>
                   <th>الهاتف</th>
                   <th>الحالة</th>
+                  {canManage ? <th></th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -448,6 +475,13 @@ export default function DistributionScreen(props: { user: SessionUser }): ReactN
                     <td>{r.name}</td>
                     <td dir="ltr">{r.phone ?? '—'}</td>
                     <td>{r.active === 1 ? <Badge kind="ok" text="نشط" /> : <Badge kind="muted" text="معطّل" />}</td>
+                    {canManage ? (
+                      <td>
+                        <button className="btn danger small" onClick={() => void deleteRep(r)} title="حذف نهائي (لمن بلا جولات)">
+                          حذف
+                        </button>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -467,6 +501,7 @@ export default function DistributionScreen(props: { user: SessionUser }): ReactN
                   <th>الخط</th>
                   <th>ملاحظة</th>
                   <th>الحالة</th>
+                  {canManage ? <th></th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -475,6 +510,13 @@ export default function DistributionScreen(props: { user: SessionUser }): ReactN
                     <td>{r.name}</td>
                     <td>{r.note ?? '—'}</td>
                     <td>{r.active === 1 ? <Badge kind="ok" text="نشط" /> : <Badge kind="muted" text="معطّل" />}</td>
+                    {canManage ? (
+                      <td>
+                        <button className="btn danger small" onClick={() => void deleteRoute(r)} title="حذف نهائي (لمن بلا جولات)">
+                          حذف
+                        </button>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>

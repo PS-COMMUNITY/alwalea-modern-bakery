@@ -4,7 +4,7 @@
 // clientRef يمنع الترحيل المزدوج (توحيد مع البيع والشراء — إصلاح BUG-4)
 // =============================================================
 import { ApiError, reqStr, optStr, reqInt, reqMilli, reqDate, reqArr, obj } from '../validate'
-import { SvcCtx, addStockMovement, assertStock, stockBalance, nextDocNo } from './helpers'
+import { SvcCtx, addStockMovement, assertStock, stockBalance, nextDocNo, assertNoActiveStockCount } from './helpers'
 import { assertMonthOpen } from './period'
 
 interface RecipeItemInput {
@@ -121,6 +121,8 @@ export function createBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
       if (existing) return getBatch(ctx, { id: Number(existing.id) })
     }
 
+    // حاجز الجرد النشط (rc.12 P0-1 — صريح عند المدخل): إنتاج بلا حركات أثناء جرد
+    assertNoActiveStockCount(db)
     // حاجز الشهر المقفل: دفعة إنتاج بتاريخها (الافتراضي الآن) — بعد فحص clientRef وقبل المعالجة
     assertMonthOpen(db, date)
 
@@ -253,7 +255,36 @@ export function getBatch(ctx: SvcCtx, payload: Record<string, unknown>): Record<
   return { ...b, materials }
 }
 
-/** إلغاء دفعة: حركات عكسية موثقة */
+/**
+ * rc.12 — حذف وصفة نهائيًا: مسموح فقط إن لم تُستخدم في أي دفعة إنتاج.
+ * الوصفة المستخدمة بياناتها التكلفية موثقة — تُعطّل (active=0) بدل الحذف.
+ */
+export function deleteRecipe(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    const r = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM recipes WHERE id = ?', [id])
+    if (!r) throw new ApiError('الوصفة غير موجودة', 404)
+    const used = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM production_batches WHERE recipe_id = ?', [id])
+    if (Number(used?.c ?? 0) > 0) {
+      throw new ApiError(
+        `لا يمكن حذف الوصفة: استُخدمت في ${used?.c} دفعة إنتاج (بياناتها موثقة) — يمكنك تعطيلها من التعديل (نشط = لا)`,
+        409
+      )
+    }
+    ctx.db.run('DELETE FROM recipe_items WHERE recipe_id = ?', [id])
+    ctx.db.run('DELETE FROM recipes WHERE id = ?', [id])
+    ctx.audit('recipe.delete', 'recipe', id, { name: r.name })
+    return { id, deleted: true as const }
+  })
+}
+
+/** إلغاء دفعة: حركات عكسية موثقة — rc.12 (إصلاح P0-2 من مراجعة المحترفين):
+ * يُبنى الإلغاء من عكس **كل** حركات الدفعة الأصلية (PRODUCTION_OUT + PRODUCTION_IN + WASTE)
+ * بصفوفها الفعلية، وفحص التوفر يُحسب **صافي** أثر الدفعة على كل منتج (لا الإجمالي الخام)،
+ * فلا يُرفض إلغاء سليم ولا يُخرّب الرصيد عندما وُجد هالك.
+ * مثال مرجعي: ناتج 100، هالك 10 → داخل المخزون +100 وWASTE −10 (صافي 90)؛
+ * الإلغاء يعكس الثلاثة: −100 +10 = صافي −90 = إزالة الصافي الصحيح.
+ */
 export function cancelBatch(ctx: SvcCtx, payload: Record<string, unknown>): Record<string, unknown> {
   const id = reqInt(payload.id, 'المعرف', 1)
   const reason = reqStr(payload.reason, 'سبب الإلغاء', 300)
@@ -266,22 +297,34 @@ export function cancelBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
     if (b.status === 'CANCELLED') throw new ApiError('الدفعة ملغاة مسبقًا', 409)
     // حاجز الشهر المقفل: بتاريخ الدفعة الأصلية — بعد جلب السجل وقبل أي كتابة
     assertMonthOpen(ctx.db, b.date)
+    // rc.12 (P0-1): الإلغاء حركة مخزنية — خاضع لحاجز الجرد النشط أيضًا
+    assertNoActiveStockCount(ctx.db)
 
+    // كل حركات الدفعة الأصلية بلا استثناء (كان يستثني WASTE فيخلّ الرصيد)
     const moves = ctx.db.query<{ product_id: number; qty_milli: number; type: string }>(
       `SELECT product_id, qty_milli, type FROM stock_movements
-       WHERE ref_type = 'batch' AND ref_id = ? AND type IN ('PRODUCTION_OUT','PRODUCTION_IN') ORDER BY id`,
+       WHERE ref_type = 'batch' AND ref_id = ? AND type IN ('PRODUCTION_OUT','PRODUCTION_IN','WASTE') ORDER BY id`,
       [id]
     )
 
-    // تحقق: الناتج المعاد خصمه يجب أن يكون متاحًا (قد يكون بيع)
-    const produced = moves.filter((m) => m.type === 'PRODUCTION_IN')
-    for (const m of produced) {
-      const balance = stockBalance(ctx.db, Number(m.product_id))
-      if (balance < Math.abs(Number(m.qty_milli))) {
-        throw new ApiError('لا يمكن الإلغاء: الناتج تم استهلاكه/بيعه — أعد الكميات أولًا')
+    // الصافي لكل منتج: سالب = مواد خُصمت (عكسها يُرجع — لا فحص)،
+    // موجب = ناتج صافٍ داخل المخزون (عكسه يخصم — نتحقق من توفره)
+    const netByProduct = new Map<number, number>()
+    for (const m of moves) {
+      const pid = Number(m.product_id)
+      netByProduct.set(pid, (netByProduct.get(pid) ?? 0) + Number(m.qty_milli))
+    }
+    for (const [pid, net] of netByProduct) {
+      if (net <= 0) continue
+      const balance = stockBalance(ctx.db, pid)
+      if (balance < net) {
+        throw new ApiError(
+          `لا يمكن الإلغاء: صافي ناتج الدفعة (${net / 1000} كغ) تم استهلاكه/بيعه — الرصيد الحالي ${balance / 1000}. أعد الكميات أولًا`
+        )
       }
     }
 
+    // عكس كل حركة بحركتها المعاكسة (بما فيها WASTE — منع التمييز)
     for (const m of moves) {
       addStockMovement(ctx.db, {
         productId: Number(m.product_id),

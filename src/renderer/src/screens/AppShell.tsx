@@ -3,8 +3,9 @@
 // أيقونات SVG محلية (بلا إيموجي) — مظهر مؤسسي هادئ
 // اسم النشاط ديناميكي من الإعدادات، والقائمة تُفلتر بالصلاحيات.
 // =============================================================
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { SessionUser, AppSettings } from '../../../shared/types'
+import { call } from '../api'
 import { ROLE_LABELS, type Role } from '../../../shared/permissions'
 import type { ReactNode } from 'react'
 import type { ComponentType } from 'react'
@@ -83,6 +84,37 @@ export default function AppShell(props: {
   const items = NAV.filter((n) => n.always || perms.includes(n.perm))
   const activeNav = NAV.find((n) => n.key === tab)
 
+  // rc.12 (P0-5): مراقبة فشل الحفظ على القرص — لافتة حمراء دائمة + زر إعادة محاولة
+  const [persistFailed, setPersistFailed] = useState(false)
+  const [persistError, setPersistError] = useState<string | null>(null)
+  const checkPersist = useCallback(async (): Promise<void> => {
+    try {
+      const st = await call<{ persistFailed: boolean; lastPersistError: string | null }>('db.persistStatus', {})
+      setPersistFailed(st.persistFailed)
+      setPersistError(st.lastPersistError)
+    } catch {
+      // حالة القناة غير حرجة — تجاهل
+    }
+  }, [])
+  useEffect(() => {
+    void checkPersist()
+    const t = setInterval(() => void checkPersist(), 15000)
+    return () => clearInterval(t)
+  }, [checkPersist])
+  const retryPersist = async (): Promise<void> => {
+    try {
+      const r = await call<{ ok: boolean; error: string | null }>('db.retryPersist', {})
+      if (r.ok) {
+        setPersistFailed(false)
+        setPersistError(null)
+      } else {
+        setPersistError(r.error)
+      }
+    } catch (e) {
+      setPersistError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const renderScreen = (): ReactNode => {
     switch (tab) {
       case 'dashboard':
@@ -157,6 +189,27 @@ export default function AppShell(props: {
         </div>
       </aside>
       <div className="main-col">
+        {persistFailed ? (
+          <div
+            role="alert"
+            style={{
+              background: 'var(--err)',
+              color: '#fff',
+              padding: '10px 16px',
+              display: 'flex',
+              gap: 12,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              fontWeight: 600
+            }}
+          >
+            <span>⚠️ فشل حفظ البيانات على القرص — البيانات الحديثة في الذاكرة فقط وكل الكتابات الجديدة موقوفة حمايةً لبياناتك.</span>
+            <button className="btn small" style={{ background: '#fff', color: 'var(--err)' }} onClick={() => void retryPersist()}>
+              إعادة المحاولة للحفظ
+            </button>
+            {persistError ? <span style={{ fontWeight: 400, fontSize: 12, opacity: 0.9 }}>({persistError})</span> : null}
+          </div>
+        ) : null}
         <header className="topbar">
           <div className="biz">{props.business || 'مخبز الولاء'}</div>
           <div className="crumb">

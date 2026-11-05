@@ -199,6 +199,25 @@ export default function StockCountScreen(props: {
     }
   }
 
+  /** rc.12 (P0-1): حذف مسودة الجرد — يفك القفل الموحد دون ترحيل أي حركات */
+  const deleteDraft = async (): Promise<void> => {
+    if (count === null) return
+    if (!window.confirm(`حذف مسودة الجرد (${count.period_ym} — رقم ${count.id}) نهائيًا؟\n\nهذا يفك قفل الحركات المخزنية دون اعتماد — الورقة وبنودها تُحذف ولا تُكتب أي حركة. لا يمكن التراجع.`)) return
+    setBusy(true)
+    setError('')
+    try {
+      await call('counts.cancel', { id: count.id, reason: 'حذف من شاشة الجرد' })
+      setView(null)
+      setRows([])
+      setNotice('تم حذف مسودة الجرد — الحركات المخزنية تعمل الآن طبيعيًا')
+      void loadMonths(month)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const doClose = async (): Promise<void> => {
     setBusy(true)
     setError('')
@@ -332,6 +351,11 @@ export default function StockCountScreen(props: {
         {editable ? (
           <button className="btn primary small" disabled={busy} onClick={() => void openApproveConfirm()}>
             اعتماد الجرد ✓
+          </button>
+        ) : null}
+        {editable && canAdmin ? (
+          <button className="btn danger small" disabled={busy} onClick={() => void deleteDraft()} title="حذف المسودة وفك قفل الحركات دون ترحيل">
+            حذف المسودة 🗑
           </button>
         ) : null}
         {canAdmin && !locked ? (

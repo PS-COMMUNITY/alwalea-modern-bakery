@@ -181,6 +181,107 @@ const PREVIEW_KEY_TABLES: Array<{ key: string; label: string }> = [
   { key: 'audit_log', label: 'قيود التدقيق' }
 ]
 
+interface FolderInfo {
+  dir: string
+  exists: boolean
+  dbPath: string
+  files: Array<{ name: string; sizeBytes: number; modifiedAt: string }>
+}
+
+/**
+ * rc.12 — ملاحظة المالك: «لما بدي أرجع لنسخة ما بجدها داخل الجهاز».
+ * بطاقة تكشف مجلد النسخ بالكامل: المسار النصي للنسخ + زر فتح المجلد في مدير ملفات
+ * ويندوز + قائمة ملفات النسخ الفعلية على القرص.
+ */
+function BackupFolderCard(): ReactNode {
+  const [info, setInfo] = useState<FolderInfo | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async (): Promise<void> => {
+    setError('')
+    try {
+      setInfo(await call<FolderInfo>('backup.folderInfo', {}))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const open = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await call<{ ok: boolean; dir: string }>('backup.openFolder', {})
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const formatBytes = (n: number): string => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`)
+
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 14, background: 'rgba(199,123,63,0.06)' }}>
+      <h3 style={{ margin: '0 0 8px' }}>📁 مكان النسخ الاحتياطية على هذا الجهاز</h3>
+      {error ? <Banner kind="error" text={error} /> : null}
+      {info ? (
+        <>
+          <div style={{ fontSize: 13, marginBottom: 10 }}>
+            <div>
+              مجلد النسخ: <code dir="ltr" style={{ background: 'rgba(0,0,0,0.05)', padding: '2px 6px', borderRadius: 6 }}>{info.dir}</code>
+            </div>
+            <div style={{ marginTop: 4, color: 'var(--muted)' }}>
+              ملف قاعدة البيانات: <code dir="ltr" style={{ fontSize: 12 }}>{info.dbPath}</code>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+            <button className="btn primary" disabled={busy} onClick={() => void open()}>
+              📂 فتح مجلد النسخ في ويندوز
+            </button>
+            <button className="btn ghost" onClick={() => void load()}>
+              تحديث
+            </button>
+            <span style={{ color: 'var(--muted)', fontSize: 12, alignSelf: 'center' }}>
+              {info.files.length} ملفًا على القرص — النسخ التلقائية عند الإغلاق تحمل بادئة auto وتُحفظ آخر 14 نسخة منها
+            </span>
+          </div>
+          {info.files.length > 0 ? (
+            <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 8 }}>
+              <table className="data" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>الملف</th>
+                    <th className="num">الحجم</th>
+                    <th>آخر تعديل</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {info.files.slice(0, 50).map((f) => (
+                    <tr key={f.name}>
+                      <td dir="ltr" style={{ fontSize: 12 }}>{f.name}</td>
+                      <td className="num">{formatBytes(f.sizeBytes)}</td>
+                      <td dir="ltr" style={{ fontSize: 12 }}>{fmtDateTime(f.modifiedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>لا ملفات نسخ بعد — أنشئ نسخة أولًا بالزر أدناه، أو انتظر النسخة التلقائية عند الإغلاق.</p>
+          )}
+        </>
+      ) : (
+        <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>جارٍ قراءة مجلد النسخ…</p>
+      )}
+    </div>
+  )
+}
+
 function BackupSection(): ReactNode {
   const [list, setList] = useState<BackupRecordRow[] | null>(null)
   const [error, setError] = useState('')
@@ -282,6 +383,8 @@ function BackupSection(): ReactNode {
       <p style={{ color: 'var(--muted)', fontSize: 13, margin: '0 0 14px' }}>
         النسخة ملف JSON كامل قابل للنقل بين الأجهزة — بلا كلمات مرور أو جلسات. قبل أي استعادة يُنشئ النظام تلقائيًا نسخة أمان من القاعدة الحالية.
       </p>
+
+      <BackupFolderCard />
 
       {error ? <Banner kind="error" text={error} /> : null}
       {notice ? <Banner kind="ok" text={notice} /> : null}

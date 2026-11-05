@@ -11,6 +11,8 @@
 //   G6 الملفات            — مجلدات وسجلات النظام (autobackup.log، telegram.log) وصلاحية المحتوى
 //   G7 الجرد والإقفال      — دورة الجرد كاملة + الحاجز الموحد على البيع داخل شهر مقفل
 //   G8 تيليجرام والإعدادات — مفاتيح الإعداد، فشل رشيق، سجل المحاولات، تدقيق
+//   G9 إصلاحات مراجعة المحترفين (rc.12) — حاجز الجرد النشط، إلغاء إنتاج بالهالك صافيًا،
+//      نسخ احتياطي كامل بلا أسرار، فشل حفظ القرص، وحذف الكيانات بلا حركات
 // لا يلمس أي قاعدة حقيقية — كل شيء في /tmp مؤقت ويعمل نظيفًا.
 // =============================================================
 import { rmSync, existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, copyFileSync } from 'node:fs'
@@ -485,10 +487,176 @@ async function main(): Promise<void> {
   const badKey = await invoke(db3, 'settings.update', { token: token3, settings: { 'مفتاح غريب': 'قيمة تسريب' } })
   check('G8: مفتاح غريب لا يرمي ولا يُخزن (تجاهل صامت آمن)', badKey.ok === true && q(db3, "SELECT COUNT(*) AS c FROM settings WHERE key='مفتاح غريب'") === 0, JSON.stringify(badKey).slice(0,80))
 
+
+  // ============ G9: إصلاحات مراجعة المحترفين (rc.12) ============
+  startGroup('G9 إصلاحات مراجعة المحترفين rc.12')
+  {
+    const db4 = await openDb(`${TEST_DIR}/data/bakery-g9.db`)
+    const token4 = await seedBusiness(db4)
+    const g9 = qaIds()
+
+    // ----- P0-1: حاجز الجرد النشط الموحد -----
+    const cnt = (await invoke(db4, 'counts.create', { token: token4 })) as Env & { data?: { id: number; countNo: string } }
+    check('G9/P0-1: فتح ورقة جرد (مسودة) نجح', cnt.ok === true && typeof cnt.data?.id === 'number', cnt.error ?? '')
+    const blockedSale = (await invoke(db4, 'sales.create', {
+      token: token4, items: [{ productId: g9.p1, qtyMilli: 1000 }], payments: [{ method: 'CASH', amountMinor: 500 }]
+    })) as Env & { error?: string; code?: number }
+    check('G9/P0-1: البيع مرفوض 423 أثناء جرد نشط', blockedSale.ok === false && blockedSale.code === 423, blockedSale.error ?? '')
+    check('G9/P0-1: رسالة الحاجز توضح سبب المنع', (blockedSale.error ?? '').includes('جرد'), blockedSale.error ?? '')
+    const blockedPurchase = (await invoke(db4, 'purchases.create', {
+      token: token4, supplierId: g9.supId, paidMinor: 0, items: [{ productId: g9.p1, qtyMilli: 1000, unitCostMinor: 200 }]
+    })) as Env & { code?: number }
+    check('G9/P0-1: الشراء مرفوض 423 أثناء جرد نشط', blockedPurchase.ok === false && blockedPurchase.code === 423, blockedPurchase.error ?? '')
+    const blockedAdjust = (await invoke(db4, 'inventory.adjust', {
+      token: token4, productId: g9.p1, countedQtyMilli: 21000, reason: 'تسوية'
+    })) as Env & { code?: number }
+    check('G9/P0-1: تسوية المخزون مرفوضة 423 أثناء جرد', blockedAdjust.ok === false && blockedAdjust.code === 423, blockedAdjust.error ?? '')
+    const blockedProduction = (await invoke(db4, 'production.create', {
+      token: token4, recipeId: 1, actualQtyMilli: 1000
+    })) as Env & { code?: number }
+    check('G9/P0-1: الإنتاج مرفوض 423 أثناء جرد', blockedProduction.ok === false && blockedProduction.code === 423, blockedProduction.error ?? '')
+    const dupCount = (await invoke(db4, 'counts.create', { token: token4 })) as Env & { code?: number }
+    check('G9/P0-1: جرد ثانٍ متزامن مرفوض 409', dupCount.ok === false && dupCount.code === 409, dupCount.error ?? '')
+    const cancelDraft = (await invoke(db4, 'counts.cancel', { token: token4, id: cnt.data?.id ?? 0, reason: 'اختبار' })) as Env & { data?: { deleted?: boolean } }
+    check('G9/P0-1: حذف مسودة الجرد ينجح (فك القفل)', cancelDraft.ok === true && cancelDraft.data?.deleted === true, cancelDraft.error ?? '')
+    const saleAfter = (await invoke(db4, 'sales.create', {
+      token: token4, items: [{ productId: g9.p1, qtyMilli: 1000 }], payments: [{ method: 'CASH', amountMinor: 500 }]
+    })) as Env & { data?: { id: number } }
+    check('G9/P0-1: البيع يعمل بعد حذف المسودة', saleAfter.ok === true, saleAfter.error ?? '')
+
+    // ----- P0-2: إلغاء دفعة إنتاج بالهالك (صافي لا خام) -----
+    const rec = (await invoke(db4, 'recipes.create', {
+      token: token4, name: 'وصفة G9', productId: g9.p2, outputQtyMilli: 5000, items: [{ productId: g9.p1, qtyMilli: 5000 }]
+    })) as Env & { data?: { id: number } }
+    check('G9/P0-2: وصفة أُنشئت', rec.ok === true, rec.error ?? '')
+    const p2Before = Number(db4.get<{ s: number }>('SELECT COALESCE(SUM(qty_milli),0) AS s FROM stock_movements WHERE product_id = ?', [g9.p2])?.s ?? 0)
+    const p1Before = Number(db4.get<{ s: number }>('SELECT COALESCE(SUM(qty_milli),0) AS s FROM stock_movements WHERE product_id = ?', [g9.p1])?.s ?? 0)
+    const batch = (await invoke(db4, 'production.create', {
+      token: token4, recipeId: rec.data?.id ?? 1, actualQtyMilli: 2000, wasteQtyMilli: 500
+    })) as Env & { data?: { id: number } }
+    check('G9/P0-2: دفعة إنتاج بناتج 2000 وهالك 500 أُنشئت', batch.ok === true, batch.error ?? '')
+    const p2AfterBatch = Number(db4.get<{ s: number }>('SELECT COALESCE(SUM(qty_milli),0) AS s FROM stock_movements WHERE product_id = ?', [g9.p2])?.s ?? 0)
+    check('G9/P0-2: صافي أثر الدفعة على الناتج = 2000 (لا 2500)', p2AfterBatch === p2Before + 2000, `${p2AfterBatch - p2Before}`)
+    // بيع جزء من الناتج: الرصيد يصبح أقل من الإجمالي الخام (2500) وأكبر من الصافي (2000)
+    const sellSome = (await invoke(db4, 'sales.create', {
+      token: token4, items: [{ productId: g9.p2, qtyMilli: 400 }], payments: [{ method: 'CASH', amountMinor: 480 }]
+    })) as Env & { data?: { id: number } }
+    check('G9/P0-2: بيع 400 من الناتج بعد الدفعة', sellSome.ok === true, sellSome.error ?? '')
+    const cancelBatch = (await invoke(db4, 'production.cancel', {
+      token: token4, id: batch.data?.id ?? 0, reason: 'اختبار إلغاء بالهالك'
+    })) as Env & { error?: string }
+    check('G9/P0-2: الإلغاء نجح رغم أن الخام (2500) غير متاح والصافي (2000) متاح', cancelBatch.ok === true, cancelBatch.error ?? '')
+    const p2AfterCancel = Number(db4.get<{ s: number }>('SELECT COALESCE(SUM(qty_milli),0) AS s FROM stock_movements WHERE product_id = ?', [g9.p2])?.s ?? 0)
+    check('G9/P0-2: رصيد الناتج عاد تمامًا لما قبل الدفعة ناقص المبيع (400)', p2AfterCancel === p2Before - 400, `${p2AfterCancel} vs ${p2Before - 400}`)
+    const p1AfterCancel = Number(db4.get<{ s: number }>('SELECT COALESCE(SUM(qty_milli),0) AS s FROM stock_movements WHERE product_id = ?', [g9.p1])?.s ?? 0)
+    check('G9/P0-2: رصيد المادة الخام عاد كما كان قبل الدفعة', p1AfterCancel === p1Before, `${p1AfterCancel} vs ${p1Before}`)
+    const wasteReversed = db4.get<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM stock_movements WHERE ref_type = 'batch_cancel' AND ref_id = ? AND type = 'WASTE'", [batch.data?.id ?? 0]
+    )
+    check('G9/P0-2: حركة الهالك WASTE عُكست فعليًا في الإلغاء', Number(wasteReversed?.c ?? 0) === 1)
+
+    // ----- P0-3 + P1-4: النسخ الاحتياطي كامل بلا أسرار -----
+    const tgSet = await invoke(db4, 'settings.update', { token: token4, settings: { telegram_bot_token: '123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' } })
+    check('G9/P1-4: توكن تيليجرام محفوظ في الإعدادات', tgSet.ok === true, tgSet.error ?? '')
+    const exp = (await invoke(db4, 'backup.export', { token: token4, note: 'G9' })) as Env & { data?: { path: string; schemaVersion: number } }
+    check('G9/P0-3: تصدير نسخة نجح', exp.ok === true && typeof exp.data?.path === 'string', exp.error ?? '')
+    const backupJson = JSON.parse(readFileSync(exp.data?.path ?? '', 'utf8')) as { schemaVersion: number; redactedSettingsKeys?: string[]; tables: Record<string, unknown[]> }
+    check('G9/P0-3: إصدار مخطط النسخة = 2', backupJson.schemaVersion === 2, String(backupJson.schemaVersion))
+    check('G9/P0-3: النسخة تتضمن جداول الجرد والإقفال الثلاثة', ['period_close', 'stock_count', 'stock_count_item'].every((t) => Array.isArray(backupJson.tables[t])))
+    check('G9/P0-3: عدد بنود الجرد في النسخة = البنود الفعلية', (backupJson.tables['stock_count_item'] ?? []).length === q(db4, 'SELECT COUNT(*) AS c FROM stock_count_item'))
+    const settingsRows = (backupJson.tables['settings'] ?? []) as Array<{ key: string }>
+    check('G9/P1-4: توكن تيليجرام غائب كليًا عن ملف النسخة', !settingsRows.some((r) => r.key === 'telegram_bot_token') && !readFileSync(exp.data?.path ?? '', 'utf8').includes('xxxxxxxxxx'))
+    check('G9/P1-4: قائمة المفاتيح المنقّحة موثقة في النسخة', (backupJson.redactedSettingsKeys ?? []).includes('telegram_bot_token'))
+    const v1Preview = (await invoke(db4, 'backup.preview', { token: token4, json: JSON.stringify({ ...backupJson, schemaVersion: 1 }) })) as Env & { error?: string }
+    check('G9/P0-3: نسخة مخطط قديم (v1) تُرفض برسالة واضحة', v1Preview.ok === false && (v1Preview.error ?? '').includes('قديم'), v1Preview.error ?? '')
+    // استعادة round-trip إلى قاعدة ثانية مع بيانات جرد فعلية
+    const cnt2 = (await invoke(db4, 'counts.create', { token: token4 })) as Env & { data?: { id: number } }
+    check('G9/P0-3: جرد جديد للمطابقة بعد الاستعادة', cnt2.ok === true, cnt2.error ?? '')
+    const exp2 = (await invoke(db4, 'backup.export', { token: token4, note: 'G9-with-count' })) as Env & { data?: { path: string } }
+    const countsAtExport = q(db4, 'SELECT COUNT(*) AS c FROM stock_count')
+    const itemsAtExport = q(db4, 'SELECT COUNT(*) AS c FROM stock_count_item')
+    const cancelCnt2 = (await invoke(db4, 'counts.cancel', { token: token4, id: cnt2.data?.id ?? 0, reason: 'انتهى اختبار النسخ' })) as Env & { data?: { deleted?: boolean } }
+    check('G9/P0-3: حذف مسودة الجرد بعد النسخ (فك القفل للمتابعة)', cancelCnt2.ok === true, cancelCnt2.error ?? '')
+    const db5 = await openDb(`${TEST_DIR}/data/bakery-g9-restore.db`)
+    const setup5 = await invoke(db5, 'setup.run', { businessName: 'قاعدة الاستعادة', ownerName: 'المالك', password: '7777' })
+    check('G9/P0-3: قاعدة الاستعادة مهيأة', setup5.ok === true, setup5.error ?? '')
+    const login5 = (await invoke(db5, 'auth.login', { password: '7777' })) as Env & { data?: { token: string } }
+    check('G9/P0-3: دخول قاعدة الاستعادة نجح', login5.ok === true && typeof login5.data?.token === 'string', login5.error ?? '')
+    const rest = (await invoke(db5, 'backup.restore', { token: login5.data?.token, json: readFileSync(exp2.data?.path ?? '', 'utf8'), newOwnerPassword: '1234' })) as Env & { error?: string }
+    check('G9/P0-3: الاستعادة نجحت مع بيانات جرد وإقفال', rest.ok === true, rest.error ?? '')
+    check('G9/P0-3: سجلات الجرد استُعيدت بالمطابقة (وقت التصدير)', q(db5, 'SELECT COUNT(*) AS c FROM stock_count') === countsAtExport, `${q(db5, 'SELECT COUNT(*) AS c FROM stock_count')} vs ${countsAtExport}`)
+    check('G9/P0-3: بنود الجرد استُعيدت بالمطابقة (وقت التصدير)', q(db5, 'SELECT COUNT(*) AS c FROM stock_count_item') === itemsAtExport, `${q(db5, 'SELECT COUNT(*) AS c FROM stock_count_item')} vs ${itemsAtExport}`)
+    check('G9/P0-3: التوكن السرّي لم يدخل قاعدة الاستعادة', q(db5, "SELECT COUNT(*) AS c FROM settings WHERE key = 'telegram_bot_token'") === 0)
+
+    // ----- P0-5: فشل الحفظ على القرص -----
+    db4.setPersistFn(() => { throw new Error('EACCES: simulated disk full') })
+    const write1 = await invoke(db4, 'settings.update', { token: token4, settings: { business_name: 'مخبز بعد فشل الحفظ' } })
+    check('G9/P0-5: الكتابة الأولى بعد فشل الحفظ تُقبل (المعاملة التزمت بالذاكرة)', write1.ok === true, write1.error ?? '')
+    check('G9/P0-5: حالة persistFailed مرفوعة', db4.persistStatus().persistFailed === true)
+    const write2 = (await invoke(db4, 'settings.update', { token: token4, settings: { business_name: 'محاولة ثانية' } })) as Env & { code?: number }
+    check('G9/P0-5: أي كتابة جديدة مرفوضة 507 حتى إعادة المحاولة', write2.ok === false && write2.code === 507, write2.error ?? '')
+    const status = (await invoke(db4, 'db.persistStatus', { token: token4 })) as Env & { data?: { persistFailed: boolean } }
+    check('G9/P0-5: قناة persistStatus تعرض الفشل', status.ok === true && status.data?.persistFailed === true)
+    db4.setPersistFn(() => db4.persist())
+    const retry = db4.retryPersist()
+    check('G9/P0-5: إعادة المحاولة بعد إصلاح القرص تنجح وتفك القفل', retry.ok === true && db4.persistStatus().persistFailed === false)
+    const write3 = await invoke(db4, 'settings.update', { token: token4, settings: { business_name: 'مخبز جناح الاختبارات' } })
+    check('G9/P0-5: الكتابة تعمل بعد فك القفل', write3.ok === true, write3.error ?? '')
+
+    // ----- حذف الكيانات بلا حركات (طلب المالك) -----
+    const freshCat = (await invoke(db4, 'categories.create', { token: token4, name: 'فئة للحذف' })) as Env & { data?: { id: number } }
+    const delEmptyCat = (await invoke(db4, 'categories.delete', { token: token4, id: freshCat.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: فئة فارغة تُحذف', delEmptyCat.ok === true && delEmptyCat.data?.deleted === true, delEmptyCat.error ?? '')
+    const delUsedCat = (await invoke(db4, 'categories.delete', { token: token4, id: 1 })) as Env & { code?: number }
+    check('G9/حذف: فئة بمنتجات تُرفض 409', delUsedCat.ok === false && delUsedCat.code === 409, delUsedCat.error ?? '')
+    const freshProd = (await invoke(db4, 'products.create', {
+      token: token4, name: 'منتج للحذف', sku: 'QA-DEL', categoryId: 1, type: 'FINISHED', baseUnit: 'قطعة',
+      priceMinor: 100, costMinor: 50, minStockMilli: 0, trackStock: true, active: true
+    })) as Env & { data?: { id: number } }
+    const delProd = (await invoke(db4, 'products.delete', { token: token4, id: freshProd.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: منتج بلا حركات يُحذف', delProd.ok === true && delProd.data?.deleted === true, delProd.error ?? '')
+    const delUsedProd = (await invoke(db4, 'products.delete', { token: token4, id: g9.p1 })) as Env & { code?: number }
+    check('G9/حذف: منتج بحركات يُرفض 409 مع اقتراح التعطيل', delUsedProd.ok === false && delUsedProd.code === 409 && (delUsedProd.error ?? '').includes('تعطيل'), delUsedProd.error ?? '')
+    const freshCust = (await invoke(db4, 'customers.create', { token: token4, name: 'عميل بالخطأ' })) as Env & { data?: { id: number } }
+    const delCust = (await invoke(db4, 'customers.delete', { token: token4, id: freshCust.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: عميل بلا قيود يُحذف', delCust.ok === true && delCust.data?.deleted === true, delCust.error ?? '')
+    const saleOnCust = (await invoke(db4, 'sales.create', {
+      token: token4, customerId: g9.custId, items: [{ productId: g9.p2, qtyMilli: 1000 }], payments: [{ method: 'CASH', amountMinor: 300 }]
+    })) as Env & { data?: { id: number } }
+    const delUsedCust = (await invoke(db4, 'customers.delete', { token: token4, id: g9.custId })) as Env & { code?: number }
+    check('G9/حذف: عميل بقيود/فواتير يُرفض 409', saleOnCust.ok === true && delUsedCust.ok === false && delUsedCust.code === 409, delUsedCust.error ?? '')
+    const freshSup = (await invoke(db4, 'suppliers.create', { token: token4, name: 'مورد بالخطأ' })) as Env & { data?: { id: number } }
+    const delSup = (await invoke(db4, 'suppliers.delete', { token: token4, id: freshSup.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: مورد بلا قيود يُحذف', delSup.ok === true && delSup.data?.deleted === true, delSup.error ?? '')
+    const freshRep = (await invoke(db4, 'distribution.reps.create', { token: token4, name: 'مندوب بالخطأ' })) as Env & { data?: { id: number } }
+    const delRep = (await invoke(db4, 'distribution.reps.delete', { token: token4, id: freshRep.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: مندوب بلا جولات يُحذف', delRep.ok === true && delRep.data?.deleted === true, delRep.error ?? '')
+    const rep2 = (await invoke(db4, 'distribution.reps.create', { token: token4, name: 'مندوب بجولات' })) as Env & { data?: { id: number } }
+    const trip = (await invoke(db4, 'distribution.trips.create', { token: token4, repId: rep2.data?.id ?? 0 })) as Env & { data?: { id: number } }
+    check('G9/حذف: جولة أُنشئت للمندوب', trip.ok === true, trip.error ?? '')
+    const delUsedRep = (await invoke(db4, 'distribution.reps.delete', { token: token4, id: rep2.data?.id ?? 0 })) as Env & { code?: number }
+    check('G9/حذف: مندوب بجولات يُرفض 409', delUsedRep.ok === false && delUsedRep.code === 409, delUsedRep.error ?? '')
+    const freshRoute = (await invoke(db4, 'distribution.routes.create', { token: token4, name: 'خط بالخطأ' })) as Env & { data?: { id: number } }
+    const delRoute = (await invoke(db4, 'distribution.routes.delete', { token: token4, id: freshRoute.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: خط بلا جولات يُحذف', delRoute.ok === true && delRoute.data?.deleted === true, delRoute.error ?? '')
+    const freshExpCat = (await invoke(db4, 'expenses.categories.create', { token: token4, name: 'فئة مصروف بالخطأ' })) as Env & { data?: { id: number } }
+    const delExpCat = (await invoke(db4, 'expenses.categories.delete', { token: token4, id: freshExpCat.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: فئة مصروفات فارغة تُحذف', delExpCat.ok === true && delExpCat.data?.deleted === true, delExpCat.error ?? '')
+    const freshRecipe = (await invoke(db4, 'recipes.create', {
+      token: token4, name: 'وصفة بالخطأ', productId: g9.p1, outputQtyMilli: 1000, items: [{ productId: g9.p2, qtyMilli: 1000 }]
+    })) as Env & { data?: { id: number } }
+    const delRecipe = (await invoke(db4, 'recipes.delete', { token: token4, id: freshRecipe.data?.id ?? 0 })) as Env & { data?: { deleted?: boolean } }
+    check('G9/حذف: وصفة غير مستخدمة تُحذف', delRecipe.ok === true && delRecipe.data?.deleted === true, delRecipe.error ?? '')
+    const delUsedRecipe = (await invoke(db4, 'recipes.delete', { token: token4, id: rec.data?.id ?? 0 })) as Env & { code?: number }
+    check('G9/حذف: وصفة مستخدمة في دفعات تُرفض 409', delUsedRecipe.ok === false && delUsedRecipe.code === 409, delUsedRecipe.error ?? '')
+    db4.close()
+    db5.close()
+  }
+
   // ============ التقرير النهائي ============
   const report = {
     suite: 'bakery-qa-suite',
-    version: '1.0.0-rc.11',
+    version: '1.0.0-rc.12',
     timestamp: new Date().toISOString(),
     total: pass + fail,
     pass,

@@ -101,6 +101,19 @@ export default function ProductionScreen(props: { user: SessionUser }): ReactNod
 
   const canManage = props.user.perms.includes('production.manage')
 
+  const deleteRecipe = async (r: { id: number; name: string }): Promise<void> => {
+    if (!window.confirm(`حذف الوصفة «${r.name}» نهائيًا؟ الحذف مسموح فقط لوصفة لم تُستخدم في أي دفعة إنتاج — وإلا عطّلها من التعديل.`)) return
+    setError('')
+    try {
+      await call('recipes.delete', { id: r.id })
+      setNotice(`تم حذف الوصفة «${r.name}»`)
+      const list = await call<RecipeListRow[]>('recipes.list', {})
+      setRecipes(list)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const load = useCallback(async (): Promise<void> => {
     setError('')
     try {
@@ -337,6 +350,9 @@ export default function ProductionScreen(props: { user: SessionUser }): ReactNod
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="btn ghost small" onClick={() => openEditRecipe(r)}>
                       تعديل
+                    </button>{' '}
+                    <button className="btn danger small" onClick={() => void deleteRecipe(r)} title="حذف نهائي (لوصفة غير مستخدمة)">
+                      حذف
                     </button>
                   </td>
                 ) : null}

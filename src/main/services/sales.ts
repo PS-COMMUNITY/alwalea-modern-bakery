@@ -18,6 +18,7 @@ import {
   nextDocNo
 } from './helpers'
 import { assertMonthOpen } from './period'
+import { assertNoActiveStockCount } from './helpers'
 import { requireProductLite } from './catalog'
 
 interface ItemInput {
@@ -65,6 +66,8 @@ export function createSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
     }
 
     // حاجز الشهر المقفل: فاتورة جديدة بتاريخها (الافتراضي الآن) — بعد فحص clientRef وقبل المعالجة
+    // rc.12 (P0-1): صريح عند المدخل — بيع بلا حركات أثناء جرد نشط
+    assertNoActiveStockCount(db)
     assertMonthOpen(db, date)
 
     if (customerId !== null) {
@@ -240,6 +243,7 @@ export function cancelSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
     if (sale.status === 'CANCELLED') throw new ApiError('الفاتورة ملغاة مسبقًا', 409)
     // حاجز الشهر المقفل: بتاريخ الفاتورة الأصلية — بعد جلب السجل وقبل أي كتابة
     assertMonthOpen(ctx.db, sale.date)
+    assertNoActiveStockCount(ctx.db)
 
     for (const item of sale.items) {
       const product = requireProductLite(ctx, item.product_id)

@@ -78,6 +78,18 @@ export default function SuppliersScreen(props: { user: SessionUser }): ReactNode
     }
   }
 
+  const deleteSupplier = async (s: SupplierUI): Promise<void> => {
+    if (!window.confirm(`حذف المورد «${s.name}» نهائيًا؟\n\nالحذف مسموح فقط لمورد بلا أي قيود أو فواتير شراء — إن كان له أثر محاسبي سيُرفض الحذف ويُقترح التعطيل.`)) return
+    setError('')
+    try {
+      await call('suppliers.delete', { id: s.id })
+      setNotice(`تم حذف المورد «${s.name}»`)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const openStatement = async (s: SupplierUI): Promise<void> => {
     setError('')
     try {
@@ -181,7 +193,7 @@ export default function SuppliersScreen(props: { user: SessionUser }): ReactNode
                       </button>{' '}
                     </>
                   ) : null}
-                  {canManage ? (
+                  {canManage ? (<>
                     <button
                       className="btn ghost small"
                       onClick={() =>
@@ -189,8 +201,11 @@ export default function SuppliersScreen(props: { user: SessionUser }): ReactNode
                       }
                     >
                       تعديل
+                    </button>{' '}
+                    <button className="btn danger small" onClick={() => void deleteSupplier(s)} title="حذف نهائي (لمن بلا حركات)">
+                      حذف
                     </button>
-                  ) : null}
+                  </>) : null}
                 </td>
               </tr>
             ))}

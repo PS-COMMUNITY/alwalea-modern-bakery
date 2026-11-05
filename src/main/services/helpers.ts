@@ -1,5 +1,7 @@
 // =============================================================
 // مخبز الولاء الحديث — مساعدات مشتركة للخدمات
+// rc.12 (P0-1): حاجز الجرد النشط الموحد — كل حركة مخزنية تمر عبر addStockMovement
+// وبالتالي الحاجز هنا يحمي كل الخدمات والقنوات في طبقة الخدمة لا الواجهة.
 // =============================================================
 import { BakeryDb } from '../db'
 import { ApiError } from '../validate'
@@ -104,7 +106,33 @@ export function nextDocNo(db: BakeryDb, prefix: 'S' | 'P' | 'PRD' | 'TRP', date:
   return `${prefix}-${dayKey}-${String(n).padStart(4, '0')}`
 }
 
-/** حركة مخزون موحدة (تُستدعى داخل معاملة) */
+// ---------- حاجز الجرد النشط (rc.12 — إصلاح P0-1 من مراجعة المحترفين) ----------
+
+export const STOCK_COUNT_LOCK_MESSAGE =
+  'يوجد جرد مخزون نشط (مسودة) — لا يمكن تنفيذ أي حركة مخزون (بيع/شراء/إنتاج/تسوية/إعدام/جولة توزيع) ' +
+  'حتى اعتماد ورقة الجرد أو حذفها من شاشة الجرد، حتى تبقى أرقام اللقطة متسقة مع لحظة واحدة'
+
+/**
+ * هل توجد ورقة جرد نشطة (DRAFT)؟ — يعيد الورقة أو undefined
+ */
+export function activeStockCount(db: BakeryDb): { id: number; count_no: string; month: string } | undefined {
+  return db.get<{ id: number; count_no: string; month: string }>(
+    "SELECT id, count_no, month FROM stock_count WHERE status = 'DRAFT' ORDER BY id DESC LIMIT 1"
+  )
+}
+
+/**
+ * الحاجز الموحد: يرمي 423 إن وُجد جرد نشط. يُستدعى من addStockMovement تلقائيًا،
+ * ومن بداية كل معالج كتابة مخزنية (رسائل أوضح قبل أي كتابة جزئية).
+ */
+export function assertNoActiveStockCount(db: BakeryDb): void {
+  const c = activeStockCount(db)
+  if (c) {
+    throw new ApiError(`${STOCK_COUNT_LOCK_MESSAGE} — الورقة: ${c.count_no}`, 423)
+  }
+}
+
+/** حركة مخزون موحدة (تُستدعى داخل معاملة) — الحاجز الموحد للجرد النشط مفروض هنا */
 export function addStockMovement(
   db: BakeryDb,
   args: {
@@ -119,6 +147,12 @@ export function addStockMovement(
     userId?: number | null
   }
 ): void {
+  // rc.12 (P0-1): كل حركة مخزنية تمر من هنا — منع أي كتابة أثناء جرد نشط.
+  // الاستثناء الوحيد: حركات الاعتماد نفسه (refType='StockCount') لأنها إتمام الجرد
+  // وتحدث بعد تغيير حالة الورقة إلى APPROVED داخل نفس المعاملة.
+  if (args.refType !== 'StockCount') {
+    assertNoActiveStockCount(db)
+  }
   db.run(
     `INSERT INTO stock_movements (product_id, qty_milli, type, ref_type, ref_id, unit_cost_minor, note, date, user_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

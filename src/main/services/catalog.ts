@@ -6,6 +6,55 @@ import { ApiError, reqStr, optStr, reqInt, optInt, reqMinor, reqEnum, reqBool, o
 import type { CategoryRow, ProductRow } from '../../shared/types'
 import { SvcCtx } from './helpers'
 
+/**
+ * rc.12 — طلب المالك: حذف فئة أُضيفت بالخطأ — مسموح فقط إن كانت فارغة من المنتجات.
+ */
+export function deleteCategory(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    const cat = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM categories WHERE id = ?', [id])
+    if (!cat) throw new ApiError('الفئة غير موجودة', 404)
+    const used = ctx.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM products WHERE category_id = ?', [id])
+    if (Number(used?.c ?? 0) > 0) {
+      throw new ApiError(`لا يمكن حذف الفئة «${cat.name}» — تضمّن ${used?.c} منتجًا. انقل المنتجات أو احذفها أولًا`, 409)
+    }
+    ctx.db.run('DELETE FROM categories WHERE id = ?', [id])
+    ctx.audit('category.delete', 'category', id, { name: cat.name })
+    return { id, deleted: true as const }
+  })
+}
+
+/**
+ * rc.12 — طلب المالك: حذف منتج أُضيف بالخطأ — مسموح فقط إن لم يكن له أي حركة إطلاقًا.
+ * المنتج بحركات (بيع/شراء/إنتاج/جرد) بياناته موثقة — يُعطّل بدل الحذف.
+ */
+export function deleteProduct(ctx: SvcCtx, payload: Record<string, unknown>): { id: number; deleted: true } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  return ctx.db.tx(() => {
+    const prod = ctx.db.get<{ id: number; name: string }>('SELECT id, name FROM products WHERE id = ?', [id])
+    if (!prod) throw new ApiError('المنتج غير موجود', 404)
+    const refs: Array<[string, string]> = [
+      ['حركات مخزون', 'SELECT COUNT(*) AS c FROM stock_movements WHERE product_id = ?'],
+      ['بنود فواتير بيع', 'SELECT COUNT(*) AS c FROM sale_items WHERE product_id = ?'],
+      ['بنود مشتريات', 'SELECT COUNT(*) AS c FROM purchase_items WHERE product_id = ?'],
+      ['مكونات وصفات', 'SELECT COUNT(*) AS c FROM recipe_items WHERE product_id = ?'],
+      ['نواتج وصفات', 'SELECT COUNT(*) AS c FROM recipes WHERE product_id = ?'],
+      ['بنود تحميل جولات', 'SELECT COUNT(*) AS c FROM trip_loads WHERE product_id = ?']
+    ]
+    const reasons: string[] = []
+    for (const [label, sql] of refs) {
+      const r = ctx.db.get<{ c: number }>(sql, [id])
+      if (Number(r?.c ?? 0) > 0) reasons.push(`${label} (${r?.c})`)
+    }
+    if (reasons.length > 0) {
+      throw new ApiError(`لا يمكن حذف المنتج «${prod.name}» — له أثر موثق: ${reasons.join('، ')}. استخدم «تعطيل» بدلًا من الحذف`, 409)
+    }
+    ctx.db.run('DELETE FROM products WHERE id = ?', [id])
+    ctx.audit('product.delete', 'product', id, { name: prod.name })
+    return { id, deleted: true as const }
+  })
+}
+
 const PRODUCT_TYPES = ['RAW', 'FINISHED', 'TRADE'] as const
 
 export function listCategories(ctx: SvcCtx, payload: Record<string, unknown>): CategoryRow[] {
