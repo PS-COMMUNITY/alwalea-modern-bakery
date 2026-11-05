@@ -56,10 +56,12 @@ export function salesReport(ctx: SvcCtx, payload: Record<string, unknown>): unkn
 
 export function collectionsReport(ctx: SvcCtx, payload: Record<string, unknown>): unknown[] {
   const { from, to } = range(payload)
+  // rc.12-merge: created_at مخزّن UTC — localtime يحوّله لتاريخ الجهاز المحلي (Asia/Jerusalem)
+  // قبل المقارنة/العرض، وإلا انحرفت التحصيلات يومًا كاملًا بعد منتصف الليل
   return ctx.db.query(
-    `SELECT date(l.created_at) AS date, c.name AS customer_name, -l.amount_minor AS amount_minor, l.ref_type, l.note
+    `SELECT date(l.created_at, 'localtime') AS date, c.name AS customer_name, -l.amount_minor AS amount_minor, l.ref_type, l.note
      FROM customer_ledger l JOIN customers c ON c.id = l.customer_id
-     WHERE l.amount_minor < 0 AND date(l.created_at) BETWEEN ? AND ?
+     WHERE l.amount_minor < 0 AND date(l.created_at, 'localtime') BETWEEN ? AND ?
      ORDER BY l.created_at DESC LIMIT 500`,
     [from, to]
   )
@@ -93,10 +95,12 @@ export function purchasesReport(ctx: SvcCtx, payload: Record<string, unknown>): 
 
 export function inventoryValuationReport(ctx: SvcCtx): unknown {
   const rows = ctx.db.query<{ name: string; base_unit: string; balance: number; cost: number; value: number }>(
+    // rc.12-merge: القسمة الصحيحة كانت تقتطع قيمة المخزون (قسمة صحيحة /1000 على أعداد صحيحة) —
+    // ROUND على مجموع milli ثم قسمة عشرية /1000.0 (إصلاح من تدقيق local)
     `SELECT p.name, p.base_unit,
             COALESCE((SELECT SUM(m.qty_milli) FROM stock_movements m WHERE m.product_id = p.id), 0) AS balance,
             p.cost_minor AS cost,
-            COALESCE((SELECT SUM(m.qty_milli) FROM stock_movements m WHERE m.product_id = p.id), 0) * p.cost_minor / 1000 AS value
+            COALESCE(ROUND((SELECT SUM(m.qty_milli) FROM stock_movements m WHERE m.product_id = p.id), 0) * p.cost_minor / 1000.0, 0) AS value
      FROM products p WHERE p.track_stock = 1 AND p.active = 1 ORDER BY p.name`
   )
   const total = rows.reduce((s, r) => s + Number(r.value), 0)
@@ -335,9 +339,10 @@ export function eod(ctx: SvcCtx, payload: Record<string, unknown>): EodData {
       [date]
     )
     .map((r) => ({ method: r.method, amount_minor: Number(r.amount_minor) }))
+  // rc.12-merge: نفس إصلاح localtime — تحصيلات اليوم تُقاس بالتاريخ المحلي (Asia/Jerusalem) لا UTC
   const collections = db.get<{ s: number }>(
     `SELECT COALESCE(SUM(-amount_minor),0) AS s FROM customer_ledger
-     WHERE amount_minor < 0 AND date(created_at) = ?`,
+     WHERE amount_minor < 0 AND date(created_at, 'localtime') = ?`,
     [date]
   )
   const expenses = db.get<{ s: number }>(

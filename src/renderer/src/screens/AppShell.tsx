@@ -122,7 +122,8 @@ export default function AppShell(props: {
       case 'pos':
         return <PosScreen user={props.user} settings={props.settings} />
       case 'products':
-        return <ProductsScreen />
+        // rc.12-merge: تمرير المستخدم لشاشة المنتجات — يلزم لصلاحية إدارة الفئات categories.manage في المدير المدمج
+        return <ProductsScreen user={props.user} />
       case 'customers':
         return <CustomersScreen />
       case 'suppliers':

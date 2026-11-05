@@ -82,9 +82,11 @@ export function createCustomer(ctx: SvcCtx, payload: Record<string, unknown>): P
 export function updateCustomer(ctx: SvcCtx, payload: Record<string, unknown>): PartyRow {
   const id = reqInt(payload.id, 'المعرف', 1)
   return ctx.db.tx(() => {
-    getCustomer(ctx, { id })
+    // rc.12-merge: التعديل الجزئي (اسم/هاتف فقط) كان يعيد تنشيط عميل معطّل إجباريًا
+    // (undefined → 1) — عند غياب active من الحمولة نحافظ على قيمة existing
+    const existing = getCustomer(ctx, { id })
     const input = readPartyInput(payload)
-    const active = payload.active === undefined ? 1 : payload.active === false ? 0 : 1
+    const active = payload.active === undefined ? Number(existing.active) : payload.active === false ? 0 : 1
     ctx.db.run('UPDATE customers SET name = ?, phone = ?, address = ?, note = ?, active = ? WHERE id = ?', [
       input.name,
       input.phone,
@@ -106,11 +108,12 @@ export function customerStatement(ctx: SvcCtx, payload: Record<string, unknown>)
   const conditions = ['l.customer_id = ?']
   const params: unknown[] = [id]
   if (from) {
-    conditions.push('date(l.created_at) >= ?')
+    // rc.12-merge: created_at مخزّن UTC — localtime يوحد التاريخ مع توقيت الجهاز المحلي
+    conditions.push("date(l.created_at, 'localtime') >= ?")
     params.push(from)
   }
   if (to) {
-    conditions.push('date(l.created_at) <= ?')
+    conditions.push("date(l.created_at, 'localtime') <= ?")
     params.push(to)
   }
   const rows = ctx.db.query<{ id: number; created_at: string; ref_type: string; ref_id: number | null; amount_minor: number; note: string | null }>(
@@ -236,9 +239,10 @@ export function createSupplier(ctx: SvcCtx, payload: Record<string, unknown>): P
 export function updateSupplier(ctx: SvcCtx, payload: Record<string, unknown>): PartyRow {
   const id = reqInt(payload.id, 'المعرف', 1)
   return ctx.db.tx(() => {
-    getSupplier(ctx, { id })
+    // rc.12-merge: نفس إصلاح updateCustomer — التعديل الجزئي لا يعيد تنشيط مورد معطّل
+    const existing = getSupplier(ctx, { id })
     const input = readPartyInput(payload)
-    const active = payload.active === undefined ? 1 : payload.active === false ? 0 : 1
+    const active = payload.active === undefined ? Number(existing.active) : payload.active === false ? 0 : 1
     ctx.db.run('UPDATE suppliers SET name = ?, phone = ?, address = ?, note = ?, active = ? WHERE id = ?', [
       input.name,
       input.phone,
@@ -254,11 +258,26 @@ export function updateSupplier(ctx: SvcCtx, payload: Record<string, unknown>): P
 
 export function supplierStatement(ctx: SvcCtx, payload: Record<string, unknown>): { supplier: PartyRow; rows: LedgerRow[]; balanceMinor: number } {
   const id = reqInt(payload.id, 'المعرف', 1)
+  const from = optStr(payload.from, 'من', 10)
+  const to = optStr(payload.to, 'إلى', 10)
   const supplier = getSupplier(ctx, { id })
+  // rc.12-merge: كشف المورد كان يتجاهل فلاتر الفترة from/to كليًا (بعكس كشف العميل) —
+  // الآن نفس السلوك مع localtime لتوحيد التاريخ المحلي
+  const conditions = ['l.supplier_id = ?']
+  const params: unknown[] = [id]
+  if (from) {
+    conditions.push("date(l.created_at, 'localtime') >= ?")
+    params.push(from)
+  }
+  if (to) {
+    conditions.push("date(l.created_at, 'localtime') <= ?")
+    params.push(to)
+  }
   const rows = ctx.db.query<{ id: number; created_at: string; ref_type: string; ref_id: number | null; amount_minor: number; note: string | null }>(
     `SELECT l.id, l.created_at, l.ref_type, l.ref_id, l.amount_minor, l.note
-     FROM supplier_ledger l WHERE l.supplier_id = ? ORDER BY l.created_at, l.id`,
-    [id]
+     FROM supplier_ledger l WHERE ${conditions.join(' AND ')}
+     ORDER BY l.created_at, l.id`,
+    params
   )
   let running = 0
   const ledger: LedgerRow[] = rows.map((r) => {

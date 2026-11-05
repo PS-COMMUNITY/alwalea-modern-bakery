@@ -1,11 +1,13 @@
 // =============================================================
 // مخبز الولاء الحديث — شاشة المنتجات: بحث/إضافة/تعديل/تعطيل
+// rc.12-merge: + مدير الفئات (إضافة/تعديل/حذف آمن بفحص المراجع) منقول من local —
+//              مع إبقاء ميزات target كاملة (ملصقات الباركود + حذف المنتج الآمن)
 // =============================================================
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { CategoryRow, ProductRow } from '../../../shared/types'
+import type { CategoryRow, ProductRow, SessionUser } from '../../../shared/types'
 import { call, money, qty as fmtQ } from '../api'
-import { Field, Modal, Banner, Badge, EmptyState, statusBadge } from '../components/ui'
+import { Field, Modal, Banner, Badge, EmptyState, statusBadge, ConfirmModal } from '../components/ui'
 import LabelsModal from '../labels'
 
 interface ProductUI extends ProductRow {
@@ -33,7 +35,9 @@ function parseNum(v: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-export default function ProductsScreen(): ReactNode {
+export default function ProductsScreen(props: { user: SessionUser }): ReactNode {
+  // rc.12-merge: صلاحية إدارة الفئات — تُخفي لوحة الفئات عن من لا يملكها (القناة نفسها مفروضة في الخلفية)
+  const canManageCats = props.user.perms.includes('categories.manage')
   const [rows, setRows] = useState<ProductUI[]>([])
   const [cats, setCats] = useState<CategoryRow[]>([])
   const [q, setQ] = useState('')
@@ -42,6 +46,14 @@ export default function ProductsScreen(): ReactNode {
   const [notice, setNotice] = useState('')
   const [form, setForm] = useState<FormState | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // ===== rc.12-merge: إدارة الفئات — إضافة/تعديل/حذف آمن بفحص المراجع (من local) =====
+  const [catsOpen, setCatsOpen] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  const [catEdit, setCatEdit] = useState<{ id: number; name: string } | null>(null)
+  const [catDeleteFor, setCatDeleteFor] = useState<CategoryRow | null>(null)
+  const [catBusy, setCatBusy] = useState(false)
+  const [catError, setCatError] = useState('')
 
   const load = useCallback(async (): Promise<void> => {
     setError('')
@@ -145,6 +157,59 @@ export default function ProductsScreen(): ReactNode {
     }
   }
 
+  // ===== rc.12-merge: إدارة الفئات — إضافة/تعديل/حذف آمن (من local) =====
+  const saveNewCat = async (): Promise<void> => {
+    const name = newCatName.trim()
+    if (!name) return
+    setCatBusy(true)
+    setCatError('')
+    try {
+      await call('categories.create', { name })
+      setNewCatName('')
+      setNotice(`تمت إضافة الفئة «${name}»`)
+      await load()
+    } catch (e) {
+      setCatError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCatBusy(false)
+    }
+  }
+
+  const saveCatEdit = async (): Promise<void> => {
+    if (!catEdit) return
+    const name = catEdit.name.trim()
+    if (!name) return
+    setCatBusy(true)
+    setCatError('')
+    try {
+      await call('categories.update', { id: catEdit.id, name })
+      setCatEdit(null)
+      setNotice('تم حفظ الفئة')
+      await load()
+    } catch (e) {
+      setCatError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCatBusy(false)
+    }
+  }
+
+  const deleteCat = async (): Promise<void> => {
+    if (!catDeleteFor) return
+    setCatBusy(true)
+    setCatError('')
+    try {
+      await call('categories.delete', { id: catDeleteFor.id })
+      setNotice(`تم حذف الفئة «${catDeleteFor.name}»`)
+      setCatDeleteFor(null)
+      await load()
+    } catch (e) {
+      setCatError(e instanceof Error ? e.message : String(e))
+      setCatDeleteFor(null)
+    } finally {
+      setCatBusy(false)
+    }
+  }
+
   const [labelsOpen, setLabelsOpen] = useState(false)
 
   return (
@@ -161,6 +226,12 @@ export default function ProductsScreen(): ReactNode {
           <input type="checkbox" checked={includeInactive} onChange={(e) => setIncludeInactive(e.target.checked)} />
           إظهار المعطلة
         </label>
+        {/* rc.12-merge: زر فتح/إغلاق لوحة إدارة الفئات */}
+        {canManageCats ? (
+          <button className="btn ghost" onClick={() => setCatsOpen((v) => !v)}>
+            🏷 الفئات ({cats.length}) {catsOpen ? '▲' : '▼'}
+          </button>
+        ) : null}
         <button className="btn ghost" onClick={() => setLabelsOpen(true)} title="طباعة ملصقات باركود Code 39">
           🏷️ ملصقات باركود
         </button>
@@ -168,6 +239,62 @@ export default function ProductsScreen(): ReactNode {
           ＋ منتج جديد
         </button>
       </div>
+
+      {/* rc.12-merge: لوحة إدارة الفئات — إضافة فئة جديدة + شرائح تعديل/حذف لكل فئة.
+          الحذف الآمن مفروض في الخلفية (catalog.deleteCategory يرفض حذف فئة عليها منتجات) */}
+      {catsOpen && canManageCats ? (
+        <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+            <strong>إدارة الفئات</strong>
+            <input
+              value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void saveNewCat() }}
+              placeholder="اسم فئة جديدة…"
+              style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '8px 12px', minWidth: 200 }}
+            />
+            <button className="btn primary small" disabled={catBusy || !newCatName.trim()} onClick={() => void saveNewCat()}>
+              ＋ إضافة فئة
+            </button>
+          </div>
+          {catError ? <Banner kind="error" text={catError} /> : null}
+          {cats.length === 0 ? (
+            <div style={{ color: 'var(--muted)', fontSize: 13 }}>لا فئات بعد — أضف أول فئة لتنظيم منتجاتك (خبز، معجنات، مواد خام…).</div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {cats.map((c) => (
+                <span
+                  key={c.id}
+                  style={{
+                    display: 'inline-flex', gap: 6, alignItems: 'center',
+                    border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 13,
+                    opacity: c.active === 1 ? 1 : 0.55
+                  }}
+                >
+                  {c.name}
+                  {c.active !== 1 ? <Badge kind="muted" text="معطّلة" /> : null}
+                  <button
+                    className="btn ghost small"
+                    style={{ padding: '2px 6px' }}
+                    aria-label={`تعديل الفئة ${c.name}`}
+                    onClick={() => setCatEdit({ id: c.id, name: c.name })}
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    className="btn ghost small"
+                    style={{ padding: '2px 6px', color: 'var(--danger)' }}
+                    aria-label={`حذف الفئة ${c.name}`}
+                    onClick={() => setCatDeleteFor(c)}
+                  >
+                    🗑
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {error ? <Banner kind="error" text={error} /> : null}
       {notice ? <Banner kind="ok" text={notice} /> : null}
@@ -293,6 +420,39 @@ export default function ProductsScreen(): ReactNode {
           </div>
         </Modal>
       ) : null}
+
+      {/* rc.12-merge: تعديل الفئة */}
+      {catEdit ? (
+        <Modal title={`تعديل الفئة: ${catEdit.name}`} onClose={() => setCatEdit(null)}>
+          <Field label="اسم الفئة *">
+            <input
+              value={catEdit.name}
+              onChange={(e) => setCatEdit({ ...catEdit, name: e.target.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') void saveCatEdit() }}
+              autoFocus
+            />
+          </Field>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-start' }}>
+            <button className="btn primary" disabled={catBusy || !catEdit.name.trim()} onClick={() => void saveCatEdit()}>
+              {catBusy ? 'جارٍ الحفظ…' : 'حفظ'}
+            </button>
+            <button className="btn ghost" onClick={() => setCatEdit(null)}>إلغاء</button>
+          </div>
+        </Modal>
+      ) : null}
+
+      {/* rc.12-merge: تأكيد حذف الفئة — الحذف الآمن مفروض في الخلفية (يرفض فئة عليها منتجات) */}
+      {catDeleteFor ? (
+        <ConfirmModal
+          title={`حذف الفئة: ${catDeleteFor.name}`}
+          message="سيُحذف التصنيف نهائيًا. إن كان أية منتجات مرتبطة به سيرفض النظام الحذف ويقترح التعطيل بدلًا منه."
+          confirmLabel="حذف نهائي"
+          busy={catBusy}
+          onConfirm={() => void deleteCat()}
+          onClose={() => setCatDeleteFor(null)}
+        />
+      ) : null}
+
       {labelsOpen ? <LabelsModal products={rows} onClose={() => setLabelsOpen(false)} /> : null}
     </div>
   )

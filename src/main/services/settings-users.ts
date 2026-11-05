@@ -135,7 +135,13 @@ export function updateUser(ctx: SvcCtx, payload: Record<string, unknown>): UserR
   const id = reqInt(payload.id, 'المعرف', 1)
   const name = optStr(payload.name, 'الاسم', 120)
   const role = payload.role === undefined ? null : reqEnum(payload.role, 'الدور', ROLES)
-  const active = payload.active === undefined ? null : payload.active === true
+  // rc.12-merge: قبول boolean صرفًا فقط — كانت قيمة رقمية (1/0) تُفسَّر false
+  // (payload.active === true) فتُعطَّل الحساب صامتًا؛ الآن رفض صريح برسالة واضحة
+  let active: boolean | null = null
+  if (payload.active !== undefined) {
+    if (typeof payload.active !== 'boolean') throw new ApiError('الحقل «الحالة» يجب أن يكون صحيح/خطأ')
+    active = payload.active
+  }
 
   const row = userRow(ctx.db, id)
   return ctx.db.tx(() => {
@@ -216,6 +222,60 @@ export function setPin(ctx: SvcCtx, payload: Record<string, unknown>): { done: b
     }
     ctx.audit('users.pin_change', 'user', id, { cleared: pin === null })
     return { done: true }
+  })
+}
+
+/**
+ * rc.12-merge: حذف مستخدم نهائي — سلامة مرجعية صارمة (منقول من local):
+ * - لا حذف لنفسك، ولا لآخر مالك نشط، ولا للمالك المعيّن في الإعدادات.
+ * - أي مستند/حركة/وردية/تدقيق مرتبط به (FK users(id)) يمنع الحذف نهائيًا —
+ *   البيانات التاريخية لا تُمسّ: عطّل الحساب بدلًا من ذلك (يبقى التاريخ سليمًا).
+ * - عند الحذف تُمسح جلساته النشطة أولًا.
+ */
+export function deleteUser(ctx: SvcCtx, payload: Record<string, unknown>): { done: boolean; username: string } {
+  const id = reqInt(payload.id, 'المعرف', 1)
+  if (ctx.user?.id === id) throw new ApiError('لا يمكن حذف حسابك الحالي', 400)
+  const row = userRow(ctx.db, id)
+  return ctx.db.tx(() => {
+    // حماية المالك المعيّن والمالك الأخير
+    if (getSetting(ctx.db, 'owner_user_id') === String(id)) {
+      throw new ApiError('هذا المستخدم هو المالك المعيّن في الإعدادات — عيّن مالكًا آخر أو عطّل الحساب بدلًا من حذفه', 409)
+    }
+    if (row.role === 'OWNER' && row.active === 1) {
+      const owners = ctx.db.get<{ c: number }>("SELECT COUNT(*) AS c FROM users WHERE role = 'OWNER' AND active = 1 AND id != ?", [id])
+      if (!owners || Number(owners.c) === 0) throw new ApiError('يجب أن يبقى مالك نشط واحد على الأقل — عطّل الحساب بدلًا من حذفه', 400)
+    }
+
+    // فحص كل المراجع ذات المفاتيح الأجنبية (سلامة مرجعية — لا يتيم أي سند)
+    const refChecks: Array<{ label: string; sql: string; params: number[] }> = [
+      { label: 'فاتورة بيع', sql: 'SELECT COUNT(*) AS c FROM sales WHERE user_id = ?', params: [id] },
+      { label: 'فاتورة شراء', sql: 'SELECT COUNT(*) AS c FROM purchases WHERE user_id = ?', params: [id] },
+      { label: 'حركة مخزون', sql: 'SELECT COUNT(*) AS c FROM stock_movements WHERE user_id = ?', params: [id] },
+      { label: 'دفعة إنتاج', sql: 'SELECT COUNT(*) AS c FROM production_batches WHERE user_id = ?', params: [id] },
+      { label: 'مصروف', sql: 'SELECT COUNT(*) AS c FROM expenses WHERE user_id = ?', params: [id] },
+      { label: 'وردية', sql: 'SELECT COUNT(*) AS c FROM shifts WHERE user_id = ?', params: [id] },
+      { label: 'حركة صندوق', sql: 'SELECT COUNT(*) AS c FROM cash_movements WHERE user_id = ?', params: [id] },
+      { label: 'جولة توزيع', sql: 'SELECT COUNT(*) AS c FROM distribution_trips WHERE user_id = ?', params: [id] },
+      { label: 'ورقة جرد', sql: 'SELECT COUNT(*) AS c FROM stock_count WHERE user_id = ? OR approved_by_user_id = ?', params: [id, id] },
+      { label: 'إقفال شهر', sql: 'SELECT COUNT(*) AS c FROM period_close WHERE closed_by_user_id = ? OR unlocked_by_user_id = ?', params: [id, id] }
+    ]
+    const bound: string[] = []
+    for (const rc of refChecks) {
+      const n = Number(ctx.db.get<{ c: number }>(rc.sql, rc.params)?.c ?? 0)
+      if (n > 0) bound.push(`${n} ${rc.label}`)
+    }
+    if (bound.length > 0) {
+      throw new ApiError(
+        `لا يمكن حذف المستخدم «${row.name}» — مرتبط بسجلات نشاط: ${bound.join('، ')}. ` +
+          'السجلات التاريخية لا تُحذف للحفاظ على سلامة التدقيق — عطّل الحساب بدلًا من ذلك ليختفي من الدخول والقوائم',
+        409
+      )
+    }
+
+    ctx.db.run('DELETE FROM sessions WHERE user_id = ?', [id])
+    ctx.db.run('DELETE FROM users WHERE id = ?', [id])
+    ctx.audit('users.delete', 'user', id, { username: row.username, name: row.name })
+    return { done: true, username: row.username }
   })
 }
 

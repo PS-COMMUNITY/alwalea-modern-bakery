@@ -62,6 +62,32 @@ export function Badge(props: { kind: 'ok' | 'warn' | 'err' | 'muted'; text: stri
   return <span className={`badge ${props.kind}`}>{props.text}</span>
 }
 
+// rc.12-merge: نقل ConfirmModal من local — نافذة تأكيد موحدة للإجراءات الخطرة، يستخدمها مدير الفئات المدمج في شاشة المنتجات (إضافة فقط — لا تكسر أي مكوّن قائم)
+/** نافذة تأكيد موحدة للحذف والإجراءات الخطرة (حمراء) — تُستخدم في الحذف/الاستعادة/الاعتماد */
+export function ConfirmModal(props: {
+  title: string
+  message: string
+  confirmLabel?: string
+  busy?: boolean
+  disabled?: boolean
+  onConfirm: () => void
+  onClose: () => void
+}): ReactNode {
+  return (
+    <Modal title={props.title} onClose={props.onClose}>
+      <Banner kind="error" text={props.message} />
+      <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+        <button className="btn danger" disabled={props.busy || props.disabled} onClick={props.onConfirm}>
+          {props.busy ? 'جارٍ التنفيذ…' : props.confirmLabel ?? 'تأكيد'}
+        </button>
+        <button className="btn ghost" onClick={props.onClose} disabled={props.busy}>
+          تراجع
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 export function statusBadge(status: string): ReactNode {
   if (status === 'PAID') return <Badge kind="ok" text="مدفوعة" />
   if (status === 'PARTIAL') return <Badge kind="warn" text="جزئية" />

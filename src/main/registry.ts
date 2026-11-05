@@ -56,7 +56,8 @@ publicRoute('status.get', (ctx) => {
   return {
     setupCompleted,
     businessName: setupCompleted ? (ctx.db.get<{ v: string }>("SELECT value AS v FROM settings WHERE key = 'business_name'")?.v ?? null) : null,
-    version: '1.0.0-rc.11',
+    // rc.12-merge: محاذاة مع package.json (1.0.0-rc.12) — كانت السلسلة متأخرة عن الإصدار الفعلي
+    version: '1.0.0-rc.12',
     schemaVersion: 1
   }
 })
@@ -75,6 +76,8 @@ route('settings.update', su.updateSettings, 'settings.manage')
 route('users.list', su.listUsers, 'users.manage')
 route('users.create', su.createUserSvc, 'users.manage')
 route('users.update', su.updateUser, 'users.manage')
+// rc.12-merge: قناة الحذف الآمن للمستخدم (فحص سلامة مراجع كامل في deleteUser) — كانت موجودة في local وفاتت من target
+route('users.delete', su.deleteUser, 'users.manage')
 // كلمة المرور و PIN: للمستخدم نفسه أو من يملك users.manage
 route('users.setPassword', (ctx, p) => {
   const self = ctx.user?.id === p.id

@@ -1,35 +1,28 @@
 {
-  "version": "1.0.0-rc.8+sidebarfix",
-  "git_commit": "8416ccc",
-  "built_at": "2026-11-02T09:32Z",
-  "changes_vs_rc8": [
-    "SIDEBAR FIX: .nav-scroll internal scroll area — all 16 items + Settings reachable on short laptop screens (1366x768)",
-    "QUARANTINE: parallel-session files moved to parked/ (StockCountScreen.tsx, stockcount.ts, 003_month_close.sql) — prevented half-finished SQL migration from auto-applying to client DB at runtime"
+  "version": "1.0.0-rc.12-final",
+  "git_commit": "MERGED-rc12 (5 P0 + owner requests + owner-bug fix + 17 audit fixes)",
+  "built_at": "2026-11-05T18:46Z",
+  "source_sha256_note": "هذه البصمات مولدة من ملفات البناء الفعلية بعد اكتمال البناء — أي اختلاف يعني ملفًا غير سليم",
+  "binaries": [
+    {
+      "filename": "Alwalea Modern Bakery-1.0.0-rc.12-setup.exe",
+      "sha256": "6240d8ceb86a13a3860b853b12a936bcfb298556ea6b4834e1a15b74a3beca57",
+      "size_bytes": 88246880,
+      "kind": "setup"
+    },
+    {
+      "filename": "Alwalea Modern Bakery-1.0.0-rc.12-portable.exe",
+      "sha256": "2ca7c81114f4590b281e1e2269e3e3a35d19b30b2839ee26bf5d00dc7140fda3",
+      "size_bytes": 88011762,
+      "kind": "portable"
+    }
   ],
   "gates": {
     "typecheck_renderer": "PASS 0 errors",
     "typecheck_main": "PASS 0 errors",
-    "smoke": "PASS",
-    "sidebar_check_1366x768": "PASS 9/9 (settings fully visible without scroll: bottom=638 < vh=740, internal scroll works, click opens settings, 0 console errors)"
-  },
-  "binaries": {
-    "setup": { "file": "Alwalea Modern Bakery-1.0.0-rc.8-setup.exe", "bytes": 83604869, "sha256": "5e3b5ade258dbb7b3a9b51093a5d3c52cacaa03e9b4a869c10a428f953bad25c" },
-    "portable": { "file": "Alwalea Modern Bakery-1.0.0-rc.8-portable.exe", "bytes": 83369742, "sha256": "dc6fddd3b62bf56017ba09c77faf83829a5cc9ad78bd744be27998b26e2b1c43" }
-  },
-  "delivery": {
-    "date": "2026-11-02",
-    "tunnel": "orders-knows-west-detective (almoutmag-v9)",
-    "uguu_tar": { "setup": "https://h.uguu.se/BBNzstWx.tar", "portable": "https://h.uguu.se/tEmJLast.tar" },
-    "device_upload_sha256_match": true,
-    "on_device_verify": "OK setup / OK portable, fail=0",
-    "install": "silent /S, exit code 0",
-    "post_install_verification": {
-      "processes_after_launch": 4,
-      "uninstaller_version": "1.0.0-rc.8",
-      "db_intact": "393216 bytes (identical size), lastwrite updated after launch",
-      "auto_backup_on_close_fired": "bakery-backup-auto-2026-11-02T09-41-17-192Z.json (P0-2 proven live)",
-      "safety_copy": "bakery-PRE-UPGRADE-2026-11-02_11-38-08.db",
-      "asar_contains_navscroll_fix": true
-    }
+    "qa_suite": "PASS 186/186 (G9=59)",
+    "product_edit_regression": "PASS 21/21 (بلاغ المالك: تعديل سعر المنتج بلا «خطأ غير متوقع»)",
+    "auth_flow": "PASS 20/20",
+    "smoke_xvfb": "PASS (4 migrations)"
   }
 }

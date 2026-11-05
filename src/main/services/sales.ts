@@ -80,7 +80,10 @@ export function createSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
     const lines = items.map((it) => {
       const product = requireProductLite(ctx, it.productId)
       const unitPrice = it.unitPriceMinor ?? Number(product.price_minor)
-      if (it.discountMinor > it.qtyMilli * unitPrice) throw new ApiError(`خصم السطر أكبر من قيمته للمنتج «${product.name}»`)
+      // rc.12-merge: كان الفحص يقارن الأغورة بـ qtyMilli×السعر (×1000 ضعف قيمة السطر) —
+      // نحسب القيمة الإجمالية للسطر أولًا ثم نقارن الخصم بها
+      const gross = lineTotalMinor(it.qtyMilli, unitPrice, 0)
+      if (it.discountMinor > gross) throw new ApiError(`خصم السطر أكبر من قيمته للمنتج «${product.name}»`)
       const line = lineTotalMinor(it.qtyMilli, unitPrice, it.discountMinor)
       subtotal += line
       return { ...it, product, unitPrice, line }
@@ -99,6 +102,9 @@ export function createSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
     if (credit < 0) throw new ApiError('المبلغ المدفوع أكبر من إجمالي الفاتورة')
     const cashPortion = paid
     if (credit > 0 && customerId === null) throw new ApiError('البيع الآجل يتطلب تحديد العميل')
+    // rc.12-merge إصلاح «تبخر دفعة CREDIT»: الدفعة على الحساب تُسجل دينًا في دفتر العميل،
+    // قبلاً كانت ترفع paid_minor وتختفي بلا دين ولا نقد
+    if (creditPayments > 0 && customerId === null) throw new ApiError('الدفع على الحساب (CREDIT) يتطلب تحديد العميل')
 
     const status = credit === 0 ? 'PAID' : paid + creditPayments > 0 ? 'PARTIAL' : 'CREDIT'
 
@@ -148,6 +154,9 @@ export function createSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
       ])
       if (p.method === 'CASH') {
         addCashMovement(db, { type: 'SALE', amountMinor: p.amountMinor, refType: 'sale', refId: saleId, note: invoiceNo, date, userId: ctx.user?.id ?? null })
+      } else if (p.method === 'CREDIT' && customerId !== null) {
+        // rc.12-merge: قيد الدين في دفتر العميل — قبلاً كانت الدفعة على الحساب بلا أثر محاسبي
+        addCustomerLedger(db, { customerId, refType: 'SALE_CREDIT_PAY', refId: saleId, amountMinor: p.amountMinor, note: `على الحساب — فاتورة ${invoiceNo}` })
       }
     }
 
@@ -243,6 +252,9 @@ export function cancelSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
     if (sale.status === 'CANCELLED') throw new ApiError('الفاتورة ملغاة مسبقًا', 409)
     // حاجز الشهر المقفل: بتاريخ الفاتورة الأصلية — بعد جلب السجل وقبل أي كتابة
     assertMonthOpen(ctx.db, sale.date)
+    // rc.12-merge: الحركات العكسية والنقد تُكتب بتاريخ اليوم — يجب فتح شهر اليوم أيضًا
+    // (نمط approveCount: فحص الشهرين معًا) — قبلًا كان يمكن الكتابة في شهر مقفل بصمت
+    assertMonthOpen(ctx.db, new Date())
     assertNoActiveStockCount(ctx.db)
 
     for (const item of sale.items) {
@@ -261,20 +273,29 @@ export function cancelSale(ctx: SvcCtx, payload: Record<string, unknown>): SaleD
       }
     }
 
-    if (sale.credit_minor > 0 && sale.customer_id !== null) {
-      addCustomerLedger(ctx.db, {
-        customerId: sale.customer_id,
-        refType: 'SALE_CANCEL',
-        refId: id,
-        amountMinor: -sale.credit_minor,
-        note: `إلغاء آجل ${sale.invoice_no}`
-      })
+    if (sale.customer_id !== null) {
+      // rc.12-merge: عكس الدين الكلي — بقايا الآجل (credit_minor) + دفعات الحساب (CREDIT)
+      // التي تُقيَّد في الدفتر منذ إصلاح إنشاء الفاتورة
+      const creditPaid = sale.payments.filter((p) => p.method === 'CREDIT').reduce((s2, p) => s2 + p.amount_minor, 0)
+      const debtToReverse = sale.credit_minor + creditPaid
+      if (debtToReverse > 0) {
+        addCustomerLedger(ctx.db, {
+          customerId: sale.customer_id,
+          refType: 'SALE_CANCEL',
+          refId: id,
+          amountMinor: -debtToReverse,
+          note: `إلغاء آجل ${sale.invoice_no}`
+        })
+      }
     }
 
-    if (sale.paid_minor > 0) {
+    // rc.12-merge: كان يردّ paid_minor كاملًا (يشمل دفعات CREDIT التي لم تدخل الصندوق أصلًا)
+    // → تضخيم خصم نقدي صامت من الصندوق. الآن نرد النقد الفعلي فقط من مدفوعات CASH
+    const cashPaid = sale.payments.filter((p) => p.method === 'CASH').reduce((s2, p) => s2 + p.amount_minor, 0)
+    if (cashPaid > 0) {
       addCashMovement(ctx.db, {
         type: 'ADJUSTMENT',
-        amountMinor: -sale.paid_minor,
+        amountMinor: -cashPaid,
         refType: 'sale_cancel',
         refId: id,
         note: `رد نقدي إلغاء ${sale.invoice_no}: ${reason}`,

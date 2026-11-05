@@ -1,25 +1,143 @@
 // =============================================================
 // مخبز الولاء الحديث — شاشة الإعدادات:
 // كلمة المرور (وضع الحساب الواحد) + النسخ الاحتياطي والاستعادة (backup.manage)
+// rc.12-merge: + بطاقة تحرير العملة/الضريبة/المخزون السالب (settings.update) منقولة من local —
+//              بجانب بطاقات target (بيانات النشاط/تيليجرام/النسخ التلقائي) دون تغييرها
 // =============================================================
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { SessionUser } from '../../../shared/types'
+import type { AppSettings, SessionUser, UserRow } from '../../../shared/types'
+import { ROLE_LABELS, ROLES, type Role } from '../../../shared/permissions'
 import { call, fmtDateTime, ageText, BACKUP_STALE_MS } from '../api'
-import { Field, Banner } from '../components/ui'
+import { Field, Banner, Modal, Badge, ConfirmModal } from '../components/ui'
 import { BusinessInfoCard, TelegramCard, AutoBackupCard } from '../components/SettingsCards'
 
 export default function SettingsScreen(props: { user: SessionUser }): ReactNode {
   const canBackup = props.user.perms.includes('backup.manage')
   const canSettings = props.user.perms.includes('settings.manage')
+  const canUsers = props.user.perms.includes('users.manage')
   return (
     <div>
       <h1>الإعدادات</h1>
       {canSettings ? <BusinessInfoCard /> : null}
+      {/* rc.12-merge: محرر الإعدادات المالية العامة — الحقول الغائبة عن بطاقات target (العملة/الضريبة/المخزون السالب) */}
+      {canSettings ? <FinancialSettingsCard /> : null}
       {canSettings ? <TelegramCard /> : null}
       {canBackup ? <AutoBackupCard /> : null}
+      {/* rc.12-merge: إدارة المستخدمين — إنشاء/تعطيل/حذف آمن بفحص مراجع (طلب المالك) */}
+      {canUsers ? <UsersCard /> : null}
       <PasswordCard userId={props.user.id} />
       {canBackup ? <BackupSection /> : null}
+    </div>
+  )
+}
+
+// =============================================================
+// rc.12-merge — محرر «العملة والضريبة والمخزون» (settings.update) منقول من local
+// (بطاقة BusinessSettingsCard هناك). بطاقة «بيانات النشاط» في target تغطي
+// اسم النشاط/الهاتف/العنوان/التذييل، لذا هذا القسم يكملها بالحقول الغائبة فقط
+// لتجنّب حقول مكرّرة بحفظين متوازيين:
+//   العملة (رمز العرض + كود ISO) / الضريبة (تفعيل + نسبة نقاط أساس) / المخزون السالب
+// القناة settings.update مسجلة في registry بصلاحية settings.manage وتقبل هذه المفاتيح
+// جزئيًا (SETTABLE_KEYS في services/settings-users.ts) — نمط target نفسه.
+// =============================================================
+function FinancialSettingsCard(): ReactNode {
+  const [s, setS] = useState<AppSettings | null>(null)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState(false)
+  const fieldStyle = { width: '100%', padding: '9px 12px', border: '1px solid var(--line)', borderRadius: 10 }
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setS(await call<AppSettings>('settings.get', {}))
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+  }, [])
+
+  const save = async (): Promise<void> => {
+    if (!s) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const updated = await call<AppSettings>('settings.update', {
+        settings: {
+          currency_code: s.currencyCode,
+          currency_symbol: s.currencySymbol,
+          tax_enabled: s.taxEnabled,
+          tax_bp: s.taxBp,
+          allow_negative_stock: s.allowNegativeStock
+        }
+      })
+      setS(updated)
+      setNotice('تم حفظ الإعدادات — تظهر فورًا في كل الشاشات')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!s) {
+    return error ? <div className="card" style={{ maxWidth: 980, padding: 18, marginBottom: 16 }}><Banner kind="error" text={error} /></div> : null
+  }
+
+  return (
+    <div className="card" style={{ maxWidth: 980, padding: 18, marginBottom: 16 }}>
+      <h2 style={{ marginTop: 0 }}>💱 العملة والضريبة والمخزون</h2>
+      {error ? <Banner kind="error" text={error} /> : null}
+      {notice ? <Banner kind="ok" text={notice} /> : null}
+      <div className="form-row">
+        <Field label="رمز العملة للعرض" hint="مثال: ₪ أو ج.م — يظهر بجانب كل المبالغ">
+          <input value={s.currencySymbol} onChange={(e) => setS({ ...s, currencySymbol: e.target.value })} style={fieldStyle} />
+        </Field>
+        <Field label="كود العملة" hint="ISO: ILS / EGP / JOD">
+          <input value={s.currencyCode} onChange={(e) => setS({ ...s, currencyCode: e.target.value })} style={fieldStyle} dir="ltr" />
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label="الضريبة">
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '9px 0' }}>
+            <input
+              type="checkbox"
+              checked={s.taxEnabled}
+              onChange={(e) => setS({ ...s, taxEnabled: e.target.checked })}
+            />
+            تفعيل الضريبة على المبيعات
+          </label>
+        </Field>
+        <Field label="نسبة الضريبة (نقاط أساس)" hint="1700 = 17٪ — تُطبق فقط عند التفعيل">
+          <input
+            type="number"
+            min={0}
+            max={10000}
+            value={s.taxBp}
+            disabled={!s.taxEnabled}
+            onChange={(e) => setS({ ...s, taxBp: parseInt(e.target.value, 10) || 0 })}
+            style={fieldStyle}
+            dir="ltr"
+          />
+        </Field>
+      </div>
+      <Field label="المخزون السالب">
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '9px 0' }}>
+          <input
+            type="checkbox"
+            checked={s.allowNegativeStock}
+            onChange={(e) => setS({ ...s, allowNegativeStock: e.target.checked })}
+          />
+          السماح بالبيع عند نزول الرصيد تحت الصفر
+        </label>
+      </Field>
+      <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+        <button className="btn primary" disabled={busy || !s.currencySymbol.trim() || !s.currencyCode.trim()} onClick={() => void save()}>
+          {busy ? 'جارٍ الحفظ…' : 'حفظ الإعدادات'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -612,6 +730,180 @@ function BackupSection(): ReactNode {
             ) : null}
           </div>
         </div>
+      ) : null}
+    </div>
+  )
+}
+
+// =============================================================
+// rc.12-merge — إدارة المستخدمين (منقولة من local): إنشاء حسابات الموظفين وأدوارهم،
+// تعطيل/تفعيل، وحذف نهائي آمن عبر users.delete (الخلفية تفحص 10 جداول مرجعية
+// وترفض حذف من له سجلات نشاط + تحمي المالك المعيّن وآخر مالك نشط).
+// القنوات users.list/create/update/delete مسجلة بصلاحية users.manage.
+// =============================================================
+function UsersCard(): ReactNode {
+  const [rows, setRows] = useState<UserRow[] | null>(null)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState<{ username: string; name: string; role: Role; password: string } | null>(null)
+  const [deleteFor, setDeleteFor] = useState<UserRow | null>(null)
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      setRows(await call<UserRow[]>('users.list', {}))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const createUser = async (): Promise<void> => {
+    if (!form) return
+    if (!form.username.trim() || !form.name.trim() || form.password.length < 4) {
+      setError('اسم المستخدم والاسم مطلوبان، وكلمة المرور 4 أحرف/أرقام على الأقل')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await call('users.create', { ...form, username: form.username.trim().toLowerCase() })
+      setNotice(`أُنشئ المستخدم «${form.name}» بدور ${ROLE_LABELS[form.role]}`)
+      setForm(null)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doDelete = async (): Promise<void> => {
+    if (!deleteFor) return
+    setBusy(true)
+    setError('')
+    try {
+      await call('users.delete', { id: deleteFor.id })
+      setNotice(`حُذف المستخدم «${deleteFor.name}» نهائيًا`)
+      setDeleteFor(null)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setDeleteFor(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleActive = async (u: UserRow): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await call('users.update', { id: u.id, active: u.active !== 1 })
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card" style={{ maxWidth: 980, padding: 18, marginTop: 18 }}>
+      <h2>👤 إدارة المستخدمين</h2>
+      <p style={{ color: 'var(--muted)', fontSize: 13, margin: '0 0 14px' }}>
+        إنشاء حسابات الموظفين وأدوارهم. الحذف نهائي ومسموح فقط لمن بلا أي سجلات نشاط — لمن له سجلات استخدم «تعطيل» (يبقى التاريخ سليمًا).
+      </p>
+
+      {error ? <Banner kind="error" text={error} /> : null}
+      {notice ? <Banner kind="ok" text={notice} /> : null}
+
+      <div style={{ marginBottom: 14 }}>
+        <button className="btn primary" onClick={() => setForm({ username: '', name: '', role: 'CASHIER', password: '' })}>
+          ＋ مستخدم جديد
+        </button>
+      </div>
+
+      {rows === null ? (
+        <p style={{ color: 'var(--muted)', fontSize: 13 }}>جارٍ التحميل…</p>
+      ) : (
+        <table className="data">
+          <thead>
+            <tr>
+              <th>المستخدم</th>
+              <th>اسم الدخول</th>
+              <th>الدور</th>
+              <th>الحالة</th>
+              <th>PIN</th>
+              <th>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((u) => (
+              <tr key={u.id}>
+                <td>
+                  <strong>{u.name}</strong>
+                </td>
+                <td dir="ltr">{u.username}</td>
+                <td>{ROLE_LABELS[u.role as Role] ?? u.role}</td>
+                <td>{u.active === 1 ? <Badge kind="ok" text="نشط" /> : <Badge kind="muted" text="معطّل" />}</td>
+                <td>{u.hasPin === 1 ? '✓' : '—'}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button className="btn ghost small" disabled={busy} onClick={() => void toggleActive(u)}>
+                    {u.active === 1 ? 'تعطيل' : 'تفعيل'}
+                  </button>{' '}
+                  <button className="btn ghost small" style={{ color: 'var(--err)' }} disabled={busy} onClick={() => setDeleteFor(u)}>
+                    حذف
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {form ? (
+        <Modal title="مستخدم جديد" onClose={() => setForm(null)}>
+          <div className="form-row">
+            <Field label="اسم الدخول *">
+              <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} dir="ltr" autoFocus />
+            </Field>
+            <Field label="الاسم الكامل *">
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </Field>
+          </div>
+          <div className="form-row">
+            <Field label="الدور *">
+              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="كلمة المرور *" hint="4 أحرف/أرقام على الأقل — تُخزَّن مُلبَّدة">
+              <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} dir="ltr" />
+            </Field>
+          </div>
+          <button className="btn primary" disabled={busy} onClick={() => void createUser()}>
+            {busy ? 'جارٍ الإنشاء…' : 'إنشاء المستخدم'}
+          </button>
+        </Modal>
+      ) : null}
+
+      {deleteFor ? (
+        <ConfirmModal
+          title={`حذف المستخدم: ${deleteFor.name}`}
+          message="سيُحذف الحساب وجلساته نهائيًا. إن كان للمستخدم أي سجلات نشاط (فواتير/حركات/ورديات) سيرفض النظام الحذف ويقترح التعطيل — التاريخ لا يُحذف أبدًا."
+          confirmLabel="حذف نهائي"
+          busy={busy}
+          onConfirm={() => void doDelete()}
+          onClose={() => setDeleteFor(null)}
+        />
       ) : null}
     </div>
   )

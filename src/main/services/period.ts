@@ -138,11 +138,12 @@ export function listCounts(ctx: SvcCtx, payload: Record<string, unknown>): Stock
         diff_value_minor: number
       }
     >(
+      // rc.12-merge: قيمة الفروق في القائمة كانت ×1000 (خلط milli×minor) — قسمة /1000.0 مثل الاعتماد والتقرير
       `SELECT c.id, c.count_no, c.month, c.status, c.note, c.user_name, c.created_at, c.approved_at, c.approved_by_name,
         (SELECT COUNT(*) FROM stock_count_item i WHERE i.count_id = c.id) AS items_total,
         (SELECT COUNT(*) FROM stock_count_item i WHERE i.count_id = c.id AND i.counted_qty_milli IS NOT NULL) AS items_counted,
         (SELECT COUNT(*) FROM stock_count_item i WHERE i.count_id = c.id AND i.counted_qty_milli IS NOT NULL AND i.counted_qty_milli <> i.system_qty_milli) AS diff_items,
-        (SELECT COALESCE(SUM((i.counted_qty_milli - i.system_qty_milli) * i.unit_cost_minor), 0)
+        (SELECT COALESCE(ROUND(SUM((i.counted_qty_milli - i.system_qty_milli) * i.unit_cost_minor) / 1000.0), 0)
            FROM stock_count_item i WHERE i.count_id = c.id AND i.counted_qty_milli IS NOT NULL) AS diff_value_minor
        FROM stock_count c ${where} ORDER BY c.id DESC LIMIT 200`,
       params
@@ -313,7 +314,8 @@ export function approveCount(
     let diffValueMinor = 0
     for (const i of diffs) {
       const diff = Number(i.counted_qty_milli) - Number(i.system_qty_milli)
-      diffValueMinor += diff * Number(i.unit_cost_minor)
+      // rc.12-merge: قيمة الفرق = (فرق milli × تكلفة minor) / 1000 — كان الضرب بلا قسمة يضخّم القيمة ×1000
+      diffValueMinor += Math.round((diff * Number(i.unit_cost_minor)) / 1000)
       addStockMovement(ctx.db, {
         productId: Number(i.product_id),
         qtyMilli: diff,
@@ -412,7 +414,7 @@ export function countVariance(
         counted_qty_milli: Number(i.counted_qty_milli),
         diff_milli: diff,
         unit_cost_minor: Number(i.unit_cost_minor),
-        diff_value_minor: diff * Number(i.unit_cost_minor)
+        diff_value_minor: Math.round((diff * Number(i.unit_cost_minor)) / 1000) // rc.12-merge: قسمة على 1000 (كانت ×1000 مضخّمة)
       }
     })
   const totalDiffValueMinor = rows.reduce((s, x) => s + x.diff_value_minor, 0)

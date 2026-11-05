@@ -198,6 +198,9 @@ export function cancelPurchase(ctx: SvcCtx, payload: Record<string, unknown>): R
     if (p.status === 'CANCELLED') throw new ApiError('فاتورة الشراء ملغاة مسبقًا', 409)
     // حاجز الشهر المقفل: بتاريخ الفاتورة الأصلية — بعد جلب السجل وقبل أي كتابة
     assertMonthOpen(ctx.db, p.date)
+    // rc.12-merge: الحركات العكسية والنقد تُكتب بتاريخ اليوم — يجب فتح شهر اليوم أيضًا
+    // (نمط approveCount: فحص الشهرين معًا) — قبلًا كان يمكن الكتابة في شهر مقفل بصمت
+    assertMonthOpen(ctx.db, new Date())
     assertNoActiveStockCount(ctx.db)
 
     // تحقق إمكانية الإرجاع (لا مخزون سالب عند الإلغاء)

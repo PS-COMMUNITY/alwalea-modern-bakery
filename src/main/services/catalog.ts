@@ -188,8 +188,11 @@ interface ProductInput {
 function readProductInput(payload: Record<string, unknown>, partial: boolean, existing?: ProductRow): ProductInput {
   const src = obj(payload, 'payload')
   const name = partial && payload.name === undefined ? (existing as ProductRow).name : reqStr(src.name, 'اسم المنتج', 200)
-  const sku = optStr(src.sku, 'رمز SKU', 60)
-  const categoryId = optInt(src.categoryId, 'الفئة', 1)
+  // rc.12-merge: في الوضع الجزئي sku/categoryId كانا يفسَّران undefined → null،
+  // فأي تعديل جزئي (مثل toggleActive الذي يرسل {id, active} فقط) كان يمسح
+  // تصنيف المنتج ورمز SKU صمتًا — نُرجِعهما إلى قيم existing عند غيابهما
+  const sku = partial && src.sku === undefined ? ((existing as ProductRow).sku ?? null) : optStr(src.sku, 'رمز SKU', 60)
+  const categoryId = partial && src.categoryId === undefined ? ((existing as ProductRow).category_id ?? null) : optInt(src.categoryId, 'الفئة', 1)
   const type = partial && src.type === undefined ? ((existing as ProductRow).type as (typeof PRODUCT_TYPES)[number]) : reqEnum(src.type, 'نوع المنتج', PRODUCT_TYPES)
   const baseUnit = partial && src.baseUnit === undefined ? (existing as ProductRow).base_unit : reqStr(src.baseUnit ?? 'قطعة', 'وحدة القياس', 30)
   const priceMinor = partial && src.priceMinor === undefined ? (existing as ProductRow).price_minor : reqMinor(src.priceMinor, 'سعر البيع')
@@ -226,7 +229,10 @@ export function createProduct(ctx: SvcCtx, payload: Record<string, unknown>): Pr
 export function updateProduct(ctx: SvcCtx, payload: Record<string, unknown>): ProductRow {
   const id = reqInt(payload.id, 'المعرف', 1)
   return ctx.db.tx(() => {
-    const existing = ctx.db.get<ProductRow>('SELECT id, name, sku, category_id, category_name, type, base_unit, price_minor, cost_minor, min_stock_milli, track_stock, active FROM products WHERE id = ?', [id])
+    // rc.12-merge إصلاح حرج: category_name عمود مشتق عبر JOIN فقط (ليس في جدول
+    // products) — اختياره هنا يرمي «no such column» ويظهر للمالك «خطأ غير متوقع
+    // عند تعديل سعر منتج» — نستبعده كما في local
+    const existing = ctx.db.get<ProductRow>('SELECT id, name, sku, category_id, type, base_unit, price_minor, cost_minor, min_stock_milli, track_stock, active FROM products WHERE id = ?', [id])
     if (!existing) throw new ApiError('المنتج غير موجود', 404)
     const input = readProductInput(payload, true, existing)
     if (input.sku) {
@@ -259,9 +265,9 @@ export function updateProduct(ctx: SvcCtx, payload: Record<string, unknown>): Pr
 
 /** حركة كمية سريعة على منتج (للاستخدام الداخلي) */
 export function requireProduct(ctx: SvcCtx, id: number): ProductRow {
-  const p = ctx.db.get<ProductRow>('SELECT id, name, sku, category_id, category_name, type, base_unit, price_minor, cost_minor, min_stock_milli, track_stock, active FROM products WHERE id = ?', [id])
-  if (!p) throw new ApiError('المنتج غير موجود', 404)
-  return p
+  // rc.12-merge: نفس إصلاح updateProduct — category_name عمود مشتق بـ JOIN،
+  // اختياره من الجدول مباشرة يرمي «no such column» — نستخدم getProduct الموحد
+  return getProduct(ctx, { id })
 }
 
 export function requireProductLite(ctx: SvcCtx, id: number): { id: number; name: string; base_unit: string; price_minor: number; cost_minor: number; track_stock: number } {

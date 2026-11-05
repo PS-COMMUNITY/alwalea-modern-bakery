@@ -79,13 +79,21 @@ export function updateRecipe(ctx: SvcCtx, payload: Record<string, unknown>): Rec
   const name = reqStr(payload.name, 'اسم الوصفة', 200)
   const outputQtyMilli = reqMilli(payload.outputQtyMilli, 'كمية الناتج')
   const note = optStr(payload.note, 'ملاحظة', 500)
-  const active = payload.active === undefined ? 1 : payload.active === false ? 0 : 1
   const items = readRecipeItems(payload)
   return ctx.db.tx(() => {
-    const recipe = ctx.db.get<{ product_id: number }>('SELECT product_id FROM recipes WHERE id = ?', [id])
+    // rc.12-merge: التعديل الجزئي كان يعيد تنشيط وصفة معطلة (undefined → 1 إجباريًا) — نحافظ على existing
+    const recipe = ctx.db.get<{ product_id: number; active: number }>('SELECT product_id, active FROM recipes WHERE id = ?', [id])
     if (!recipe) throw new ApiError('الوصفة غير موجودة', 404)
+    const active = payload.active === undefined ? Number(recipe.active) : payload.active === false ? 0 : 1
     if (items.some((i) => i.productId === Number(recipe.product_id))) {
       throw new ApiError('لا يمكن أن يكون المنتج الناتج مكونًا في نفس الوصفة')
+    }
+    // rc.12-merge: فحص وجود المكونات قبل الحذف/الإعادة — غيابه كان يرمي
+    // «FOREIGN KEY constraint failed» الخام → «خطأ غير متوقع» (بعكس createRecipe الذي يفحص)
+    for (const it of items) {
+      if (!ctx.db.get('SELECT id FROM products WHERE id = ?', [it.productId])) {
+        throw new ApiError('أحد المكونات غير موجود', 404)
+      }
     }
     ctx.db.run('UPDATE recipes SET name = ?, output_qty_milli = ?, note = ?, active = ?, updated_at = ? WHERE id = ?', [
       name,
@@ -297,6 +305,9 @@ export function cancelBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
     if (b.status === 'CANCELLED') throw new ApiError('الدفعة ملغاة مسبقًا', 409)
     // حاجز الشهر المقفل: بتاريخ الدفعة الأصلية — بعد جلب السجل وقبل أي كتابة
     assertMonthOpen(ctx.db, b.date)
+    // rc.12-merge: الحركات العكسية تُكتب بتاريخ اليوم (addStockMovement يستخدم today افتراضيًا) —
+    // يجب فتح شهر اليوم أيضًا (نمط approveCount) وإلا كتب إلغاء في شهر مقفل بصمت
+    assertMonthOpen(ctx.db, new Date())
     // rc.12 (P0-1): الإلغاء حركة مخزنية — خاضع لحاجز الجرد النشط أيضًا
     assertNoActiveStockCount(ctx.db)
 
@@ -306,6 +317,10 @@ export function cancelBatch(ctx: SvcCtx, payload: Record<string, unknown>): Reco
        WHERE ref_type = 'batch' AND ref_id = ? AND type IN ('PRODUCTION_OUT','PRODUCTION_IN','WASTE') ORDER BY id`,
       [id]
     )
+    // rc.12-merge: دفعة بلا حركات = بيانات غير متسقة — الإلغاء الصامت هنا يوثّق إلغاءً بلا عكس
+    if (moves.length === 0) {
+      throw new ApiError('لا توجد حركات مخزون مرتبطة بهذه الدفعة — تعذر الإلغاء الموثق', 409)
+    }
 
     // الصافي لكل منتج: سالب = مواد خُصمت (عكسها يُرجع — لا فحص)،
     // موجب = ناتج صافٍ داخل المخزون (عكسه يخصم — نتحقق من توفره)

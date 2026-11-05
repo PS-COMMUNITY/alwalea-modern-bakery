@@ -224,6 +224,9 @@ export function recordCash(ctx: SvcCtx, payload: Record<string, unknown>): { don
   const reason = reqStr(input.reason, 'السبب', 300)
   const date = input.date === undefined || input.date === null ? ctx.db.today() : reqDate(input.date, 'التاريخ')
   return ctx.db.tx(() => {
+    // rc.12-merge: حركة صندوق يدوية بتاريخ اختياري — خضوعها لحاجز الشهر المقفل كانت مفقودة كليًا
+    // (منع تسجيل حركة نقدية يدوية في شهر مقفل — إصلاح من تدقيق local)
+    assertMonthOpen(ctx.db, date)
     addCashMovement(ctx.db, { type: 'ADJUSTMENT', amountMinor, refType: 'manual', note: reason, date, userId: ctx.user?.id ?? null })
     ctx.audit('cash.record', 'cash', null, { amountMinor, reason })
     return { done: true }

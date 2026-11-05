@@ -153,6 +153,9 @@ export function createTrip(ctx: SvcCtx, payload: Record<string, unknown>): Recor
     if (routeId !== null && !db.get('SELECT id FROM distribution_routes WHERE id = ?', [routeId])) {
       throw new ApiError('الخط غير موجود', 404)
     }
+    // rc.12-merge: حاجز الشهر المقفل بتاريخ الجولة — حركات التحميل (TRIP_OUT) تُكتب بتاريخها
+    // وليس اليوم؛ حاجز الجرد النشط مفروض موحّدًا داخل addStockMovement في helpers
+    assertMonthOpen(db, date)
     const tripNo = nextDocNo(db, 'TRP', date)
     db.run(
       `INSERT INTO distribution_trips (trip_no, rep_id, route_id, date, status, notes, user_id, created_at)
@@ -198,7 +201,9 @@ export function addLoad(ctx: SvcCtx, payload: Record<string, unknown>): Record<s
     // حاجز الشهر المقفل: تحميل جولة يخصم مخزون بتاريخ الآن
     // rc.12 (P0-1): صريح عند المدخل — تحميل جولة بلا حركات أثناء جرد نشط
     assertNoActiveStockCount(ctx.db)
-    assertMonthOpen(ctx.db, new Date())
+    // rc.12-merge: الحركة تُكتب بتاريخ الجولة (trip.date) لا بتاريخ اليوم — فحص الشهر الصحيح
+    // (الفحص السابق كان new Date() فقط فتتجاوز جولة قديمة شهرًا مقفلًا بصمت)
+    assertMonthOpen(ctx.db, trip.date)
     addTripLoad(ctx, tripId, trip.trip_no, productId, qtyMilli, trip.date)
     ctx.audit('distribution.trip_load', 'trip', tripId, { productId, qtyMilli })
     return getTrip(ctx, { id: tripId })
@@ -256,6 +261,9 @@ export function addTripReturn(ctx: SvcCtx, payload: Record<string, unknown>): Re
   return ctx.db.tx(() => {
     const trip = requireTrip(ctx, tripId)
     if (trip.status !== 'OPEN') throw new ApiError('الجولة مسواة/ملغاة — لا يمكن تسجيل مرتجع', 409)
+    // rc.12-merge: حاجز الشهر المقفل بتاريخ الجولة — المرتجع يكتب TRIP_RETURN/WASTE بتاريخها
+    // حاجز الجرد النشط مفروض موحّدًا داخل addStockMovement في helpers
+    assertMonthOpen(ctx.db, trip.date)
 
     // تحقق رصيد العربة: تحميل − بيع − مرتجعات سابقة ≥ المرتجع الحالي
     for (const it of items) {
@@ -416,6 +424,9 @@ export function cancelTrip(ctx: SvcCtx, payload: Record<string, unknown>): Recor
     if (salesCount > 0 || returnsCount > 0) {
       throw new ApiError('لا يمكن إلغاء جولة بها بيع أو مرتجعات — سوِّ الجولة أولًا')
     }
+    // rc.12-merge: حاجز الشهر المقفل بتاريخ الجولة — الحركات المرتجعة للتحميل بتاريخها
+    // حاجز الجرد النشط مفروض موحّدًا داخل addStockMovement في helpers
+    assertMonthOpen(ctx.db, trip.date)
     const loads = ctx.db.query<{ product_id: number; qty_milli: number }>('SELECT product_id, qty_milli FROM trip_loads WHERE trip_id = ?', [id])
     for (const l of loads) {
       addStockMovement(ctx.db, {
@@ -455,7 +466,9 @@ export function settleTrip(ctx: SvcCtx, payload: Record<string, unknown>): Recor
     // حاجز الشهر المقفل: التسوية ترحّل فواتير ونقدًا بتاريخ الآن
     // rc.12 (P0-1): صريح عند المدخل — تسوية جولة بلا حركات أثناء جرد نشط
     assertNoActiveStockCount(db)
-    assertMonthOpen(db, new Date())
+    // rc.12-merge: التسوية ترحّل الفواتير والنقد بتاريخ الجولة (trip.date) — الفحص السابق
+    // كان بتاريخ اليوم فقط فتتجاوز تسوية جولة قديمة شهرًا مقفلًا بصمت
+    assertMonthOpen(db, trip.date)
 
     const sales = db.query<{ id: number; product_id: number; qty_milli: number; unit_price_minor: number; payment_type: string; customer_id: number | null }>(
       'SELECT id, product_id, qty_milli, unit_price_minor, payment_type, customer_id FROM trip_sales WHERE trip_id = ? ORDER BY id',

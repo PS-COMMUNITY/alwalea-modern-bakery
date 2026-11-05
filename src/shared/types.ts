@@ -16,6 +16,7 @@ export const IPC_CHANNELS = [
   'users.list',
   'users.create',
   'users.update',
+  'users.delete',
   'users.setPassword',
   'users.setPin',
   'categories.list',

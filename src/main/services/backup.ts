@@ -25,6 +25,9 @@ const TABLES: string[] = [
   'sessions',
   'schema_migrations',
   'sequences',
+  // rc.12-merge إصلاح حرج: shifts قبل sales/sale_payments/cash_movements (الكل يشير إليها)
+  // — كان ترتيبها بعدها يفشل FOREIGN KEY constraint failed عند الاستعادة فور وجود فاتورة
+  'shifts',
   'categories',
   'products',
   'customers',
@@ -43,7 +46,6 @@ const TABLES: string[] = [
   'production_batches',
   'expense_categories',
   'expenses',
-  'shifts',
   'cash_movements',
   'period_close',
   'stock_count',
@@ -525,21 +527,12 @@ export function restoreBackup(ctx: SvcCtx, payload: Record<string, unknown>): {
   let sessionKept = false
 
   ctx.db.tx(() => {
-    // تعطيل فحص المفاتيح الأجنبية مؤقتًا داخل المعاملة (sqlite لا يطبق pragma داخل tx،
-    // لذا نحذف بالترتيب العكسي وندخل بالترتيب الأمامي)
+    // rc.12-merge إصلاح حرج: PRAGMA foreign_keys مفعّل (db.ts) ولا يُعطَّل داخل tx، لذا الترتيب
+    // إلزامي: حذف بالترتيب العكسي ثم إدخال — والمستخدمون أولًا لأن أغلب الجداول
+    // تحمل user_id يشير إليهم (كان إدخالهم في النهاية يفشل فور وجود أي فاتورة:
+    // «FOREIGN KEY constraint failed» → «خطأ غير متوقع» وكانت الاستعادة معطوبة كليًا)
     for (const tb of [...TABLES].reverse()) {
       ctx.db.run(`DELETE FROM ${tb}`)
-    }
-    for (const tb of TABLES) {
-      if (tb === 'sessions') continue // الجلسات لا تُستعاد من النسخة أبدًا — رموز قديمة لا تُحيى
-      if (tb === 'users') continue // المستخدمون يُدخلون من الصفوف المحوَّلة أدناه (ببيانات تحقق مضمونة)
-      const rows = b.tables[tb] ?? []
-      for (const row of rows as Row[]) {
-        const cols = Object.keys(row)
-        if (cols.length === 0) continue
-        const placeholders = cols.map(() => '?').join(', ')
-        ctx.db.run(`INSERT INTO ${tb} (${cols.join(', ')}) VALUES (${placeholders})`, cols.map((c) => row[c]))
-      }
     }
     // إدخال المستخدمين من الصفوف المحوَّلة (كلها ببيانات تحقق صالحة) — أي إخلال يُرجع المعاملة كاملة
     for (const row of t.rows) {
@@ -547,6 +540,17 @@ export function restoreBackup(ctx: SvcCtx, payload: Record<string, unknown>): {
       const cols = Object.keys(row)
       const placeholders = cols.map(() => '?').join(', ')
       ctx.db.run(`INSERT INTO users (${cols.join(', ')}) VALUES (${placeholders})`, cols.map((c) => row[c]))
+    }
+    for (const tb of TABLES) {
+      if (tb === 'sessions') continue // الجلسات لا تُستعاد من النسخة أبدًا — رموز قديمة لا تُحيى
+      if (tb === 'users') continue // أُدخلوا أعلاه
+      const rows = b.tables[tb] ?? []
+      for (const row of rows as Row[]) {
+        const cols = Object.keys(row)
+        if (cols.length === 0) continue
+        const placeholders = cols.map(() => '?').join(', ')
+        ctx.db.run(`INSERT INTO ${tb} (${cols.join(', ')}) VALUES (${placeholders})`, cols.map((c) => row[c]))
+      }
     }
     // الحفاظ على جلسة المشغّل الحالي إن بقي حسابه في البيانات المستعادة
     if (me && token && restoredUserIds.has(me.id)) {
