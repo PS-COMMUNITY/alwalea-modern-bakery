@@ -5,13 +5,13 @@
 
 **نظام إدارة متكامل لمخبز حقيقي: نقاط بيع، مخزون، إنتاج، توزيع، محاسبة، تقارير — تطبيق سطح مكتب عربي كامل (RTL)**
 
-![Version](https://img.shields.io/badge/version-1.0.0--rc.11-c77b3f?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-1.0.0--rc.12-c77b3f?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-4e342e?style=for-the-badge&logo=windows)
 ![Electron](https://img.shields.io/badge/Electron-33-2b2b2b?style=for-the-badge&logo=electron)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?style=for-the-badge&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?style=for-the-badge&logo=react&logoColor=black)
 ![SQLite](https://img.shields.io/badge/SQLite-sql.js%20(WASM)-003b57?style=for-the-badge&logo=sqlite&logoColor=white)
-![Tests](https://img.shields.io/badge/QA-127%20checks%20PASS-2ea44f?style=for-the-badge)
+![Tests](https://img.shields.io/badge/QA-186%20checks%20PASS-2ea44f?style=for-the-badge)
 ![UI](https://img.shields.io/badge/UI-RTL%20Arabic%20%C3%97%20Cairo-fff8f0?style=for-the-badge&labelColor=4e342e)
 
 </div>
@@ -71,7 +71,7 @@
 
 | البوابة | النتيجة |
 |---|---|
-| جناح QA الموحد `scripts/qa-suite.ts` (8 مجموعات) | **127/127 PASS** |
+| جناح QA الموحد `scripts/qa-suite.ts` (9 مجموعات) | **186/186 PASS** |
 | typecheck (renderer + main) | 0 أخطاء |
 | اختبار الدخان `npm run smoke` | PASS |
 | اختبارات Auth (تدفق كامل 20 سيناريو) | 20/20 PASS |
@@ -161,7 +161,8 @@ docs/                   # 12+ وثيقة: قرارات، مصدر وسبب كل 
 | rc.8 | ✅ مسلّم | إصلاح قائمة جانبية + عزل ملفات نصف جاهزة |
 | rc.9 | ✅ مسلّم | دفع جزئي POS + لوحة متقدمة + تقارير 4 تبويبات + Excel/PDF + نهاية اليوم A4 + باركود |
 | rc.10 | ✅ مبني | استكمال ملفات ضاعت من البيئة (تيليجرام/ملصقات/بطاقات إعدادات) |
-| **rc.11** | 🚀 **الحالي** | **جرد 8 قنوات بقفل موحد + تحصين بيع أثناء الجرد + جناح QA 127 فحصًا** |
+| rc.11 | ✅ مسلّم | جرد 8 قنوات بقفل موحد + تحصين بيع أثناء الجرد + جناح QA 127 فحصًا |
+| **rc.12** | 🛡️ **الحالي** | **إصلاحات مراجعة المحترفين الخمسة + حذف الكيانات بحواجز + مجلد النسخ مكشوف — QA 186 فحصًا** |
 
 ## 📄 الترخيص
 
